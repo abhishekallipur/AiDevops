@@ -1,0 +1,18 @@
+# Taste
+- Wants truthful, evidence-based verification reporting: never claim a check passed if it could not run, and explicitly distinguish passed / failed / skipped / not-run. Confidence: 0.9
+- Prefers making the actual changes in the repository and verifying them, rather than stopping at advice, pseudocode, or a proposed architecture. Confidence: 0.85
+- Prefers persistent, cross-session project documentation (e.g. a top-level PROJECT_MEMORY.md plus a docs/ set) so a different agent can pick up the work later. Confidence: 0.8
+- Prefers updating existing documentation over creating duplicate/conflicting files. Confidence: 0.7
+- Prefers explicit feature status labels backed by evidence (VERIFIED, IMPLEMENTED — NOT VERIFIED, PARTIAL, PLANNED, BLOCKED, BROKEN) over a single completion percentage. Confidence: 0.75
+- Security-first mindset: treats repository contents and uploaded archives as untrusted input — no code execution during analysis, no following symlinks, skip/report secrets and credential files. Confidence: 0.85
+- Insists that LLM output never has unrestricted shell access: execution only through an explicit, allowlisted, typed operation registry; never run a model-supplied shell command verbatim. Confidence: 0.85
+- Requires approval gates before deployment, infrastructure changes, destructive actions, or externally visible operations. Confidence: 0.8
+- Prefers a narrow end-to-end working slice over many incomplete features, and strongly dislikes superficial placeholders that claim to work. Confidence: 0.8
+- Wants secrets read from environment variables only — never hardcoded or committed — with a .env.example documenting variable names. Confidence: 0.8
+- Prefers a Python stack: FastAPI backend, Streamlit for the UI, SQLite for initial persistence, and environment-variable configuration. Confidence: 0.6
+- Uses an OpenAI-compatible gateway (OpenRouter, with access to many models) as their LLM provider — favours provider/model-agnostic integration over single-vendor lock-in. Confidence: 0.6
+- Adds a targeted regression test for every bug found in real use and re-runs the full test suite before considering the work done. Confidence: 0.75
+- Treats analyzer-detected evidence as authoritative over LLM output: a model's plan is intent, not a contract, so gaps are reconciled from observed facts (and recorded as assumptions) rather than silently producing less than the evidence supports. Confidence: 0.65
+- Keeps a dated, decision-log style record of significant choices (context, decision, alternatives, reason, trade-offs, revisit-when) alongside the changelog. Confidence: 0.6
+- Cares about UI/UX polish: rejects plain default-theme interfaces ("so black", "no proper UI/UX design") and expects a deliberately styled UI plus immediate, visible feedback for every user action (loading/progress states) rather than subtle or below-the-fold changes. Confidence: 0.7
+- Prefers being told exactly how to run and use the project with concrete, copy-pasteable commands and their expected output, rather than having to infer steps from documentation. Confidence: 0.55

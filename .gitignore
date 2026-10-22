@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.env
+.streamlit/secrets.toml
+*.pyc
+.DS_Store
+
+# Runtime data: SQLite DB, uploaded archives, extracted projects, generated artifacts
+data/
+*.db
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

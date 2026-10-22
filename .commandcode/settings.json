@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(python --version)",
+      "Shell(python -c import sys; print(sys.executable))",
+      "Shell(python -m pytest --version)",
+      "Shell(python -c import fastapi, pydantic; print('fastapi', fastapi.__version__); print('pydantic', pydantic.VERSION))",
+      "Shell(python -m pip list 2 >& 1)",
+      "Shell(findstr:*)",
+      "Shell(if:*)",
+      "Shell(.venvScriptspython.exe:*)",
+      "Shell(else:*)",
+      "Shell(docker:*)",
+      "Shell(git:*)",
+      "Shell(mkdir aidevops 2>nul & mkdir aidevops\\analyzer 2>nul & mkdir aidevops\\planner 2>nul & mkdir aidevops\\generator 2>nul & mkdir aidevops\\execution 2>nul & mkdir aidevops\\api 2>nul & mkdir aidevops\\ui 2>nul & mkdir aidevops\\services 2>nul & mkdir docs 2>nul & mkdir tests\\fixtures 2>nul & echo done)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}
