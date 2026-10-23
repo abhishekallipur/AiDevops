@@ -1,216 +1,335 @@
-# Autonomous AI DevOps Engineer
+# Aidevops
 
-An AI-assisted DevOps system that **analyzes a repository, plans a deployment,
-generates DevOps artifacts, validates them, and runs a narrow set of allowlisted
-checks** — all locally and safely. Deployment to AWS is a planned extension, not
-part of this milestone.
+A local workspace that helps you turn an existing app into a Docker image and open a preview in your browser. Add your project, review the suggested setup, approve the build, and launch it locally.
 
-> **Project memory:** read [`PROJECT_MEMORY.md`](./PROJECT_MEMORY.md) first. It is
-> the canonical, evidence-based handoff and records exactly what is verified.
+Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning is optional: without a provider key, it uses clearly labelled rule-based example plans.
 
-## What works today (Milestone 1)
+## Quick navigation
 
-- **Repository analyzer** — static, evidence-based detection of language,
-  framework, dependencies, entry points, tests, ports, and existing Docker/CI
-  files. It **never executes repository code**.
-- **AI planner** — produces a schema-validated deployment plan. With no provider
-  key it returns a **clearly-labelled mock plan** (`source="mock"`), never
-  disguised as AI output.
-- **Artifact generator** — writes a project-specific `Dockerfile`,
-  `.dockerignore`, and (when relevant) `docker-compose.yml` and a GitHub Actions
-  workflow into an **isolated workspace**; it never overwrites your source.
-- **Validation** — Dockerfile lint plus secret scanning; artifacts are marked
-  verified/unverified.
-- **Controlled execution** — a fixed, allowlisted tool registry with timeouts,
-  output limits, working-directory restrictions, approval gates, and audit
-  records. Container tools run only when a Docker daemon is available; otherwise
-  they are recorded as `BLOCKED` rather than run on the host.
-- **Job lifecycle** — explicit states persisted in SQLite, with an approval gate
-  before execution.
-- **FastAPI backend + Streamlit UI.**
-
-**Not implemented yet:** AWS/Terraform deployment, CloudWatch monitoring,
-Kubernetes, autonomous recovery/rollback, multi-user auth. See
-[`docs/ROADMAP.md`](./docs/ROADMAP.md).
+- [Requirements](#requirements)
+- [First-time setup](#first-time-setup-windows-powershell)
+- [Run the project](#run-the-project)
+- [Use the workspace](#use-the-workspace)
+- [Supported projects](#supported-projects)
+- [Configuration and AI privacy](#configuration-and-ai-privacy)
+- [Troubleshooting](#troubleshooting)
+- [API example](#api-example-powershell)
+- [Tests and developer documentation](#tests-and-developer-documentation)
 
 ## Requirements
 
-- Windows 10/11 (verified); other OSes should work but are untested.
-- Python 3.11+ (3.14.2 verified).
-- Optional: Docker Desktop, for container execution.
-- Optional: an OpenAI-compatible API key, for live planning.
+| Requirement | Purpose |
+| --- | --- |
+| Python 3.11 or newer | Runs the backend and UI. Python 3.14.2 was tested locally. |
+| Docker Desktop with Linux containers | Required to build images, start previews, and run container tests. Start it before the backend. |
+| Internet access | Usually needed to install Python packages and download Docker images/app dependencies. |
+| Your app's source code | Upload a ZIP/TAR archive or use a folder on the backend computer. |
+| AI provider key (optional) | Enables external AI planning. The project works without one. |
 
-## Setup (PowerShell)
+The commands below are for **Windows PowerShell** and assume this checkout is at **`E:\Aidevops`**. Change that path if you saved it elsewhere. Other operating systems have not been verified in this environment.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Copy-Item .env.example .env      # optional; every variable has a safe default
-```
+## First-time setup (Windows PowerShell)
 
-## Run
-
-Start the API:
+Run these commands once from PowerShell:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn aidevops.api.main:app --port 8000
-# root:   http://localhost:8000/        (service index)
-# health: http://localhost:8000/health
-# docs:   http://localhost:8000/docs
+cd E:\Aidevops
+py --version
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Start the UI (in a second terminal, with the API running):
+`py --version` must report Python 3.11 or newer. If `py` is unavailable but `python` points to a supported version, use `python -m venv .venv` instead.
+
+**Already installed?** Skip virtual-environment creation. After pulling dependency changes, run only the `pip install -r requirements.txt` command above.
+
+These instructions call the virtual environment's Python directly. You do not need to activate it or change PowerShell's execution policy.
+
+### Optional configuration file
+
+Defaults are enough to try the app. To customize them, copy the example only if `.env` does not already exist:
 
 ```powershell
-$env:AIDEVOPS_API_URL = "http://localhost:8000"
-.\.venv\Scripts\python.exe -m streamlit run aidevops/ui/streamlit_app.py
-# http://localhost:8501
+cd E:\Aidevops
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+}
+notepad .env
 ```
 
-The UI has its own light theme (`.streamlit/config.toml`). **Create + run
-pipeline** performs the whole analyze → plan → generate → validate pass with a
-live progress panel, then pauses at the approval gate.
+Keep `.env` private and do not commit it. Restart the backend after changing its configuration. Existing shell environment variables take precedence over `.env`.
 
-## Try it end to end
+## Run the project
 
-Using the bundled sample repository (`examples/sample_python_app`):
+### 1. Start Docker Desktop
+
+Wait until its engine is ready. Check it in PowerShell:
 
 ```powershell
-# 1. Create a job
-curl -X POST http://localhost:8000/api/jobs -H "Content-Type: application/json" `
-  -d '{"source_path":"E:\\Aidevops\\examples\\sample_python_app"}'
-
-# 2. Analyze + plan + generate + validate (copy the id from step 1)
-curl -X POST http://localhost:8000/api/jobs/<JOB_ID>/run
-
-# 3. Inspect artifacts and validation
-curl http://localhost:8000/api/jobs/<JOB_ID>/artifacts
-
-# 4. Execution is gated: without approval this is refused (HTTP 400)
-curl -X POST http://localhost:8000/api/jobs/<JOB_ID>/execute `
-  -H "Content-Type: application/json" -d '{"approved":false}'
-
-# 5. Approve execution
-curl -X POST http://localhost:8000/api/jobs/<JOB_ID>/execute `
-  -H "Content-Type: application/json" -d '{"approved":true}'
+docker version
 ```
 
-Generated files land under `data/generated/<JOB_ID>/`. The job DB is
-`data/aidevops.db`.
+You should see both **Client** and **Server** information. Without Docker, you can still review projects and download setup files, but builds, previews, and container tests cannot run.
 
-## Test
+### 2. Start the backend â€” terminal 1
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+cd E:\Aidevops
+.\.venv\Scripts\python.exe -m uvicorn aidevops.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Last observed result (2026-10-22): **89 passed, 1 skipped** (the skip needs symlink privileges
-on Windows). See [`docs/TESTING.md`](./docs/TESTING.md).
+Leave this terminal running.
 
-## Enable live AI planning (optional)
+### 3. Start the frontend â€” terminal 2
 
-Set `OPENAI_API_KEY` in `.env` (and optionally `OPENAI_MODEL`,
-`OPENAI_BASE_URL`), then restart the API. Without a key the planner returns a
-labelled mock plan and `/health` reports `llm_mode: "mock"`. **Never commit
-`.env`.**
-
-The provider targets **OpenAI-compatible chat gateways**; compatibility depends on the gateway/model. For
-example, with an OpenRouter key (which gives you access to many models):
-
-```
-OPENAI_API_KEY=sk-or-v1-...
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=openai/gpt-4o-mini
-```
-
-Then plan output will carry `source: "llm"` instead of `source: "mock"`. Models
-that reject the `response_format` parameter are handled automatically: the
-provider retries without it and tolerates fenced/prose-wrapped JSON.
-
-## Configuration
-
-All configuration is via environment variables (see `.env.example`). Highlights:
-`AIDEVOPS_DATA_DIR`, `AIDEVOPS_ALLOW_LOCAL_PATHS`, `AIDEVOPS_EXEC_BACKEND`
-(`auto` | `container` | `disabled`), `AIDEVOPS_EXEC_TIMEOUT_SECONDS`,
-`OPENAI_API_KEY`, `OPENAI_MODEL`. Secret values are never logged or persisted.
-
-## Safety boundaries
-
-- Repository analysis never executes project code and never follows symlinks.
-- SSH keys, cloud credentials, `.env`, and key files are skipped and reported.
-- Archives are guarded against zip-slip, absolute paths, symlinks, and bombs.
-- LLM-proposed commands are advisory; only registry tools run, with approvals.
-- Untrusted code runs only inside a container when a daemon is available;
-  otherwise execution is blocked and reported.
-- The Docker socket is never mounted into anything.
-
-See [`docs/SECURITY.md`](./docs/SECURITY.md) for the full threat model.
-
-## Legacy: AIDevOps Copilot
-
-The original prototype (`app.py`, `rag.py`, `generator.py`, `knowledge/`) is a
-separate Streamlit app that does TF-IDF retrieval over local notes and generates
-Jenkinsfile/Dockerfile/Terraform snippets. It is preserved unchanged and is
-independent of the new system:
+Open a second PowerShell window:
 
 ```powershell
-.\.venv\Scripts\python.exe -m streamlit run app.py
+cd E:\Aidevops
+$env:AIDEVOPS_API_URL = "http://127.0.0.1:8000"
+.\.venv\Scripts\python.exe -m streamlit run aidevops/ui/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 ```
 
-## Documentation
+Leave this terminal running too. Open **[http://localhost:8501](http://localhost:8501)**.
 
-`PROJECT_MEMORY.md`, `docs/ARCHITECTURE.md`, `docs/IMPLEMENTATION_STATUS.md`,
-`docs/CHANGELOG.md`, `docs/DECISIONS.md`, `docs/TOOL_REGISTRY.md`,
-`docs/TESTING.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`.
+| Address | What it opens |
+| --- | --- |
+| [localhost:8501](http://localhost:8501) | Aidevops workspace |
+| [localhost:8000/health](http://localhost:8000/health) | Backend connection/configuration status |
+| [localhost:8000/docs](http://localhost:8000/docs) | Interactive API reference |
 
-## Audit update — 2026-10-22
+Run **one backend process per data directory**. Do not add multiple Uvicorn workers: the preview service uses a single-process worker lock.
 
-Scheduled checks must all return OK for a job to succeed. A blocked container test now produces FAILED with an explanatory reason. SUCCEEDED describes scheduled checks only, not an image build or deployment. The normal execution workflow does not build images; the separate image-build tool still needs a source+artifact build-context fix.
+### Stop or restart
 
-Container tests use filtered read-only snapshots and writable disposable container copies, with CPU/memory/PID limits. Dependency failures stop tests. See [security limitations](docs/SECURITY.md).
+1. In the UI, stop any active preview you no longer need. Use **Remove preview resources** if you also want its image and snapshot removed.
+2. Press **Ctrl+C** in each terminal to stop the frontend and backend.
+3. To restart, run the two startup commands again.
 
-Optional live local verification (starts temporary loopback API/UI servers and runs sample Python/Node tests in Docker if available):
+Stopping the frontend does not stop a preview container. Automatic preview expiry requires the backend to remain running; it reconciles expired sessions after restart. If the backend is offline, expiry is not enforced at that time.
+
+After updating the project, restart both processes to load configuration and imported-module changes, then refresh the browser. Create a **new project review** to regenerate setup files; an old review keeps its previously generated files.
+
+## Use the workspace
+
+### 1. Add a project
+
+Choose **ï¼‹ New project**, then one of:
+
+- **Upload a project:** upload the source as ZIP, TAR, GZ, or TGZ. The backend upload limit defaults to 50,000,000 bytes, even if the browser uploader displays a higher limit.
+- **Use a folder:** paste an absolute folder path, such as `E:\MyProjects\todo-app`. It must be accessible on the computer running the backend.
+- **Try an example project:** explore the bundled sample without uploading files.
+
+Use the app's source folder containing its manifest or entry point. Leave out `.env`, credentials, dependency directories, build caches, and unrelated files. A screenshot or finished installer is not app source.
+
+Aidevops reads project clues, prepares a plan, generates setup files in an isolated workspace, and performs static validation. Original source files are not overwritten. The review then waits for your decisions.
+
+### 2. Review the suggested setup
+
+Use the project tabs:
+
+| Tab | Purpose |
+| --- | --- |
+| **Build & preview** | Prepare a snapshot, build an image, and launch the app. Opens first. |
+| **Project overview** | See the detected language/framework, evidence, plan, and assumptions. |
+| **Setup files** | Inspect generated Docker/Compose/CI files and download them individually or as a ZIP. |
+| **Checks & results** | Separately approve checks and inspect their results. |
+
+The sidebar lets you reopen previous project reviews. **Refresh** reloads a project's status.
+
+A plan is labelled **AI-generated suggestion** or **Example plan Â· not AI-generated**. A static validation pass means the generated instructions passed those checks; it does not prove an image builds or the app works.
+
+### 3. Build the Docker image
+
+In **Build & preview**:
+
+1. Select **Prepare build snapshot**. This creates a filtered copy of the source plus setup files.
+2. Review the setup, then check **I reviewed this setup and approve building this snapshot**.
+3. Select **Build my app**.
+4. Wait for **Image built and verified**. Open **Build log & technical details** for progress or errors.
+
+The snapshot has a fingerprint so approval applies to that fixed copy. To include source changes, prepare and approve a new snapshot. Builds download dependencies and execute project build instructions with network access; use projects you trust.
+
+### 4. Start and open your app
+
+1. Check **I approve starting this app locally with internet access**.
+2. Usually, keep the prefilled settings. Open **Advanced preview settings** if you need to change:
+   - **App port:** the port inside the container, not the public browser port.
+   - **Health-check path:** a working HTTP endpoint, usually `/`.
+   - **Stop automatically after:** 15, 30, 60, or 120 minutes; default 30.
+   - **Environment variable:** one optional runtime name/value in the UI.
+3. Select **Start local preview**.
+4. After the startup HTTP check passes, select **Open my app**.
+
+The app must listen on `0.0.0.0` inside its container. Aidevops assigns a host port bound to `127.0.0.1`, so the preview is local to this computer. A passing HTTP check establishes basic availability, not complete functionality or security.
+
+The panel refreshes every two seconds during build/start/stop and every ten seconds while a preview is ready. **Stop preview / cancel operation** stops the operation or running container. Expand **Remove preview resources**, confirm removal, then click its button to remove that preview's container, image, and snapshot.
+
+### 5. Run optional project checks
+
+In **Checks & results**, review the explanation, check the approval box, then select **Approve & run checks**. Container tests require Docker and may download dependencies and execute app code.
+
+**Checks passed**, **image built**, and **preview ready** are separate results. Running checks does not build a preview image or deploy an app. If no tests were detected, static checks alone cannot establish app correctness.
+
+## Supported projects
+
+Detection and generation use project files and conventions; arbitrary projects are not guaranteed to run automatically.
+
+| Project | Current strategy |
+| --- | --- |
+| Create React App / Vite | Build browser assets, then serve with Nginx on container port 8080. |
+| Next.js | Production build and Node server, normally port 3000. |
+| Node.js server | Uses declared start/main and supported build scripts. |
+| FastAPI / Flask | Detects app objects and generates a web-server launch command. |
+| Django / Streamlit | Convention-based launch strategies. |
+| Static HTML | Serves an `index.html` project without a package manifest. |
+| Existing Dockerfile | Preserves it for review and build use. |
+
+CRA, Vite, static HTML, Flask, FastAPI, and Node paths have recorded live Docker checks. Other strategies have narrower verification; see [implementation status](docs/IMPLEMENTATION_STATUS.md).
+
+A single nested app can be selected automatically. For repositories containing multiple apps, select the intended app folder. Databases, private packages, custom build layouts, missing credentials, unsupported runtimes, and invalid app code can require configuration or your own Dockerfile. Database provisioning and multi-service deployment are not automatic.
+
+## Configuration and AI privacy
+
+See [.env.example](.env.example) for the full list. Common settings:
+
+| Variable | Default / meaning |
+| --- | --- |
+| `AIDEVOPS_DATA_DIR` | `data`; persistent application data. |
+| `AIDEVOPS_ALLOW_LOCAL_PATHS` | `true`; permits folder-based reviews. |
+| `AIDEVOPS_EXEC_BACKEND` | `auto`; container checks run if Docker is available. `disabled` blocks container check tools and new preview snapshots; stop existing previews separately. |
+| `AIDEVOPS_EXEC_TIMEOUT_SECONDS` | `120`; normal tool timeout. |
+| `AIDEVOPS_BUILD_TIMEOUT_SECONDS` | `600`; separate image-build timeout, capped at 1800 seconds. |
+| `AIDEVOPS_LOCAL_ONLY` | `false`; set `true` to disable external AI requests. |
+| `AIDEVOPS_AI_ALLOWED_HOSTS` | `api.openai.com,openrouter.ai`; permitted HTTPS AI destinations. |
+| `OPENAI_API_KEY` | Empty by default; optional planning provider credential. |
+| `OPENAI_MODEL` | Provider model identifier; see the repository defaults in `.env.example`. |
+| `OPENAI_BASE_URL` | Optional compatible provider endpoint; must pass the destination policy. |
+| `AIDEVOPS_API_URL` | Frontend backend address; explicitly set it in terminal 2 as shown above. |
+
+To enable external planning, edit the provider fields in `.env`, set `AIDEVOPS_LOCAL_ONLY=false`, and restart the backend. Provider/model compatibility varies. `/health` reporting `llm_mode: "live"` means configured, not proof that a provider request succeeded. Check each plan's label; failures may fall back to an example plan.
+
+For no external AI requests, put this in `.env` and restart the backend:
+
+```dotenv
+AIDEVOPS_LOCAL_ONLY=true
+```
+
+This disables external AI only. Docker builds, package downloads, and running apps can still access the network.
+
+### What is protected, and what needs care
+
+- Analysis does not execute project code; known sensitive paths and symlinks are excluded.
+- AI requests pass through filtering/redaction and a permitted HTTPS destination check. Open **Privacy Â· see what is sent to AI** to inspect the filtered request after analysis. This is not a consent screen before the original request.
+- Secret filtering is heuristic. Unusual filenames, unknown token formats, or sensitive source content can escape detection. Use local-only mode when external AI transmission is unsuitable.
+- Model-proposed commands are advisory. Registered tools and explicit approvals control execution.
+- Preview containers have resource limits and security restrictions. The Docker socket is not mounted into the app container. This is a local development tool, not a complete sandbox for hostile code.
+- Runtime environment values are not sent to AI or saved in review records. Docker can retain them in container metadata until removal. Runtime app logs are withheld in the UI because apps can print secrets; filtered build logs remain available.
+- The service has no multi-user authentication. Keep it on loopback; do not expose it publicly.
+
+Read [SECURITY.md](docs/SECURITY.md) for the full boundaries and limitations.
+
+### Where files are stored
+
+With default settings:
+
+| Location | Contents |
+| --- | --- |
+| `data/aidevops.db` | Project reviews and their state. |
+| `data/generated/<JOB_ID>/` | Generated setup files. |
+| `data/previews.db` | Preview state and build records. |
+| `data/previews/` | Preview snapshots and worker lock. |
+
+Treat these as local project data. Do not delete the data directory as a routine troubleshooting step. Use the UI's resource-removal controls for previews.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| `.venv\Scripts\python.exe` cannot be found | Run first-time setup from `E:\Aidevops`. Confirm `py --version` is supported. |
+| `ModuleNotFoundError` | Run `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` from the project directory. |
+| Backend is offline in the UI | Keep terminal 1 running. Open `/health`, check terminal errors, and verify terminal 2's `AIDEVOPS_API_URL`. |
+| Port 8000 or 8501 is already in use | Check whether Aidevops is already running. Stop the previous instance in its own terminal with Ctrl+C before restarting. |
+| Docker is unavailable | Start Docker Desktop with Linux containers, wait for `docker version` to show Server information, then restart the backend and refresh. |
+| Another preview worker owns the data directory | Stop duplicate backend processes gracefully. Run one backend for that directory; deleting the lock file is not a substitute. |
+| Upload rejected | Check the backend size limit, archive format, and excluded/unsafe files. Try the local source folder instead. |
+| Project type is unknown / several apps detected | Select the actual app folder containing its manifest or entry point, or supply a suitable Dockerfile. |
+| Image build fails | Read **Build log & technical details**. Check dependency access, build scripts, missing files, and Dockerfile assumptions. Fix the source and create a new review/snapshot. |
+| Build times out | Increase `AIDEVOPS_BUILD_TIMEOUT_SECONDS` within its maximum, restart the backend, and retry the reviewed snapshot. |
+| Image builds but preview fails | Check the internal port, a valid HTTP path, `0.0.0.0` binding, and required runtime settings/services. |
+| AI plan is labelled as an example | Check provider configuration and local-only mode. The label is intentional; a configured key does not guarantee a successful model response. |
+| Old UI or Dockerfile remains | Restart both services and refresh. Create a new review to generate updated setup files. |
+| Snapshot limit reached | Remove unused preview resources through the UI. The service currently permits 20 unremoved snapshots and two active operations. |
+
+## API example (PowerShell)
+
+The UI is the easiest starting point. For scripting, start the backend and run the following in another PowerShell terminal:
+
+```powershell
+cd E:\Aidevops
+$apiBase = "http://127.0.0.1:8000"
+$samplePath = (Resolve-Path .\examples\sample_python_app).Path
+$createBody = @{ source_path = $samplePath } | ConvertTo-Json
+$job = Invoke-RestMethod -Method Post -Uri "$apiBase/api/jobs" -ContentType "application/json" -Body $createBody
+$jobId = $job.id
+
+# Analyze, plan, generate, and validate.
+$review = Invoke-RestMethod -Method Post -Uri "$apiBase/api/jobs/$jobId/run"
+$review | Select-Object id, state, project_name
+
+# Inspect generated files before approving execution.
+$setup = Invoke-RestMethod -Uri "$apiBase/api/jobs/$jobId/artifacts"
+$setup.artifacts | Select-Object path, kind, verified
+```
+
+After reviewing the setup, this separate command approves the registered checks. It does not build a preview image:
+
+```powershell
+$approvalBody = @{ approved = $true } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$apiBase/api/jobs/$jobId/execute" -ContentType "application/json" -Body $approvalBody
+```
+
+Use [the API reference](http://localhost:8000/docs) for upload, cancellation, sanitized prompt inspection, and separate preview snapshot/build/start/stop/cleanup endpoints. Build approval includes the snapshot digest; startup requires its own approval.
+
+## Tests and developer documentation
+
+Run automated tests from the repository root:
+
+```powershell
+cd E:\Aidevops
+.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs
+```
+
+Last full-suite verification on **24 October 2026 (India time): 124 passed, 1 skipped**. The skipped test needs Windows symlink privileges. This includes 15 Streamlit UI tests; ordinary tests use isolated data and fake external services rather than proving every uploaded app builds.
+
+Optional integration checks below start temporary services and perform real Docker work. They may download dependencies and take longer; inspect their scripts before running:
+
 ```powershell
 .\.venv\Scripts\python.exe tests/smoke_local.py
-```
-Observed: both Docker workflows passed and Streamlit health/HTML returned 200. This is not a browser interaction test. The normal pytest suite uses isolated data and fake external services.
-
-## A simpler guided interface
-Open the UI and choose **Upload a project**, **Use a folder**, or **Try an example project**. Aidevops explains what it found, shows your suggested setup and lets you download all setup files together. Review the details, then give permission to run checks. Project files, commands and logs are available in expandable sections. The interface includes gentle animations, reduced-motion support and a responsive layout. It does not publish your app.
-
-Latest verification after UI redesign: **89 passed, 1 skipped**, including 12 UI interaction tests; desktop browser welcome/review navigation and folder validation checked.
-
-## Build & preview locally (2026-10-23)
-
-After reviewing a project, open **Build & open your app**:
-1. **Prepare build snapshot** copies permitted source and generated setup into a separate workspace.
-2. Review the setup and approve that snapshot, then choose **Build my app**.
-3. Once the image is verified, separately approve startup, set the app's internal port and health-check path, then **Start local preview**.
-4. When the HTTP check passes, use **Open my app**. **Stop preview** removes the running container. **Remove preview resources** additionally removes its image and snapshot after confirmation.
-
-The panel polls every two seconds during build/start and every ten seconds while a preview runs; it stays idle otherwise. Web apps must listen on 0.0.0.0 inside the container; their exposed preview port is bound only to 127.0.0.1. No cloud resources are created. Runtime app output is withheld because it may contain secrets; filtered build logs remain available. Previews expire while the backend is running (up to 10s polling delay); expiry is reconciled after restart. Run one API process per data directory.
-
-Privacy settings (restart backend after changes):
-```text
-AIDEVOPS_LOCAL_ONLY=true
-AIDEVOPS_AI_ALLOWED_HOSTS=api.openai.com,openrouter.ai
-```
-Local-only disables external AI, not Docker/package-download network traffic. Destination defaults are HTTPS-only; request redaction is heuristic. **See what is sent to AI** displays the filtered request after analysis, not a pre-send consent screen.
-
-Real Docker smoke (creates only disposable sample resources, then removes its containers/images/snapshots):
-```powershell
 .\.venv\Scripts\python.exe tests/smoke_preview.py
+.\.venv\Scripts\python.exe tests/smoke_frontends.py
 ```
-Latest full suite: **108 passed, 1 skipped**. See docs/TESTING.md for evidence and known limits. Existing API servers must be restarted to load preview routes; Streamlit normally reloads changed source.
 
-## Project-aware packaging update
+| Document | Purpose |
+| --- | --- |
+| [Project memory](PROJECT_MEMORY.md) | Contributor handoff and verification context. |
+| [Architecture](docs/ARCHITECTURE.md) | Components and data flow. |
+| [Implementation status](docs/IMPLEMENTATION_STATUS.md) | Feature coverage and verification limits. |
+| [Testing](docs/TESTING.md) | Tests and recorded evidence. |
+| [Security](docs/SECURITY.md) | Privacy, execution boundaries, and known risks. |
+| [Tool registry](docs/TOOL_REGISTRY.md) | Allowlisted execution tools. |
+| [Decisions](docs/DECISIONS.md) | Design decisions. |
+| [Changelog](docs/CHANGELOG.md) | Change history. |
+| [Roadmap](docs/ROADMAP.md) | Planned work. |
 
-Create a **new review** after updating to regenerate old Dockerfiles. Aidevops now distinguishes browser apps from Node servers: Create React App/Vite compile their assets and serve on8080; Next has a production-server strategy on3000; Node uses declared build/start scripts; FastAPI/Flask objects get appropriate web servers; static index.html projects work without a package manifest. Existing Dockerfiles can be reviewed and used. A single nested app is selected automatically; repositories with several apps ask you to choose one.
+Cloud deployment, Kubernetes management, automatic database provisioning, multi-user authentication, and autonomous recovery/rollback are not implemented.
 
-Supported is not the same as universally runnable. Private dependencies, databases, missing secrets, custom layouts/build outputs and invalid code can require configuration or a supplied Dockerfile. React(CRA),Vite,static HTML,Flask,FastAPI and Node runtime paths have live checks; other strategies have narrower evidence in IMPLEMENTATION_STATUS.md. Set AIDEVOPS_BUILD_TIMEOUT_SECONDS=600 (default) for build deadlines; normal test timeout stays separate. Live build output is available in the build-log section.
+### Legacy prototype
 
+`app.py`, `rag.py`, `generator.py`, and `knowledge/` belong to the older notes-retrieval prototype. They are separate from the main Aidevops workspace. To explore it, use another free UI port:
 
-### Workspace navigation
-Add a project using an archive, a local folder, or the bundled example. An existing project opens **Build & preview** first: prepare a snapshot, review and approve its build, then start and open the local app. Suggested launch settings are filled automatically; **Advanced preview settings** contains ports, health checks, expiry and an optional runtime environment value. Use **Project overview**, **Setup files**, and **Checks & results** for findings, downloads and separately approved checks. The indigo/navy theme uses local CSS, responsive layouts and animations that respect reduced-motion preferences.
+```powershell
+cd E:\Aidevops
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502
+```
