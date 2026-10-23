@@ -27,3 +27,36 @@ Historical 2026-10-21 live AI/container checks are retained in CHANGELOG.md. The
 - `.\.venv\Scripts\python.exe -m compileall -q aidevops tests`: passed.
 - Existing desktop browser at localhost:8501: welcome screen inspected visually; folder tab, empty-form feedback, existing review selection and new-project navigation confirmed. No new execution or live AI request was triggered by browser testing.
 - Mobile layouts, OS reduced-motion settings, screen readers and browser ZIP contents were not independently tested. Previous live Docker smoke evidence belongs to the preceding backend audit; no runtime/tool changes were made by this UI redesign.
+
+## Build/preview release — 2026-10-23
+
+| Exact command | Observed result |
+|---|---|
+| `.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs` |108 passed,1 skipped; skip remains Windows symlink creation privileges |
+| `.\.venv\Scripts\python.exe -m compileall -q aidevops tests generator.py` |PASS exit0 |
+| `.\.venv\Scripts\python.exe -m pip check` |PASS No broken requirements found |
+| `.\.venv\Scripts\python.exe tests/smoke_preview.py` |PASS exit0: real Python/Node builds, verified image IDs, loopback HTTP200, stop; deliberate build/start failures; owned resources removed |
+
+17 preview/privacy tests cover snapshot exclusions/hash invalidation, secret source rejection, background build outcomes, startup/expiry/cleanup, duplicate/cancel claims, interruption reconciliation, environment validation, privacy at the provider boundary, disabled execution, normal environment lookup source, single-worker lock, foreign-container protection, validation error secrecy and daemon-unavailable cleanup.14 UI tests include new build/start consent controls. External AI calls remain faked in tests.
+
+Historical failure preserved: first real smoke completed Docker cases but failed temporary-directory cleanup because SQLite connections remained open on Windows. Fixed with explicit close; reruns passed. Docker Desktop was initially stopped, was launched from the installed vendor executable, and server29.6.2 became available. No package installation was needed.
+
+Smoke resources use unique label-verified identities and disposable sources/data. Base image layers/shared Docker cache may remain; the test does not prune shared resources. Browser end-to-end Docker execution, mobile/assistive technology, OS reduced-motion preferences, external provider retention/security and cloud deployment are not established by these tests. Runtime logs are intentionally withheld. Expiry/restart edge cases use unit tests rather than a long-running outage simulation.
+
+Final desktop browser check: existing analyzed project opened; new Build & open your app/Prepare build snapshot controls rendered from the updated backend. Saved docs/local-preview.png. No user project was built or started through browser actions; actual build/start/failure/cleanup tests used disposable smoke sources.
+
+## Runtime strategy regression — 2026-10-23
+
+- `.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs`:123 passed,1 Windows symlink skip.
+- `.\.venv\Scripts\python.exe -m compileall -q aidevops tests`:PASS.
+- `.\.venv\Scripts\python.exe -m pip check`:PASS, no broken requirements.
+- `.\.venv\Scripts\python.exe tests/smoke_frontends.py --source "C:\Users\abhishek a\Downloads\todo_react_app-master\todo_react_app-master"`:PASS actual CRA build, HTML,JavaScript asset,SPA route; smoke resources removed.
+- `.\.venv\Scripts\python.exe tests/smoke_frontends.py`:PASS real static,Vite,Flask,FastAPI build/start/HTTP checks. Only browser strategies test SPA fallback; Flask/FastAPI test their actual root HTTP response. Smoke resources removed.
+- Browser: actual todo app My Tasks rendered; New Task accepted a title/summary and displayed it. Screenshot docs/todo-working.png. This is a concrete interaction check, not an audit of every app feature.
+
+15 new strategy regressions cover CRA/Vite asset serving, custom Vite output, Node scripts, static HTML, Next generation, Python import objects, nested/multiple roots,pyproject dependencies,existing Dockerfiles,missing Node startup,custom Node build and unsupported-input guidance. Older incorrect artifacts/snapshots are not mutated. No private project source was sent to external AI for these checks.
+
+
+## SaaS workspace refresh — 2026-10-23
+Replaced the mint review page with a navy sidebar, indigo accents, soft neutral workspace, responsive hero and local CSS illustrations. Added subtle entrance/hover/floating animation with reduced-motion support and visible keyboard focus. Project screens open Build & preview first; Project overview, Setup files and Checks & results are separate tabs. Preview ports, HTTP path and expiry remain prefilled; optional configuration is under Advanced preview settings. Resource removal is collapsed. Existing backend APIs and explicit build/start/check approvals are preserved.
+Validation: 124 passed, 1 Windows symlink privilege skip; includes 15 UI AppTests covering navigation, approvals and exact default launch payload. Existing local Streamlit server restarted to load changed imported module/theme. Browser inspected narrow-screen welcome and existing project navigation; no desktop-width or assistive-technology audit. This change does not claim new runtime coverage for generated apps.

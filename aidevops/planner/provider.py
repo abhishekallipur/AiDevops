@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from ..config import Settings
 from ..errors import ProviderError
+from ..privacy import redact, validate_destination
 from ..logging_config import get_logger
 
 log = get_logger("aidevops.planner.provider")
@@ -100,6 +101,11 @@ class OpenAIProvider:
         return any(hint in message for hint in _UNSUPPORTED_JSON_HINTS)
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        if self._settings.local_only:
+            raise ProviderError("External AI is disabled by local-only mode")
+        validate_destination(self._settings.openai_base_url, self._settings.ai_allowed_hosts)
+        system = redact(system, [self._settings.openai_api_key])
+        user = redact(user, [self._settings.openai_api_key])
         client = self._client()
         last_exc: Exception | None = None
         json_mode = True

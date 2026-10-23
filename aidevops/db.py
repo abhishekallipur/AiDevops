@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,10 +42,15 @@ class JobStore:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     # ---------------------------------------------------------------- reads
     def get(self, job_id: str) -> JobRecord:

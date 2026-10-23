@@ -1,5 +1,6 @@
 import os
 from openai import OpenAI
+from aidevops.privacy import redact, validate_destination
 
 
 SYSTEM_PROMPT = """You are AIDevOps Copilot, a careful DevOps configuration assistant.
@@ -68,6 +69,8 @@ provider "aws" {
 
 def generate_artifact(artifact_type: str, task: str, project_details: str, retrieved_context: str):
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if os.getenv("AIDEVOPS_LOCAL_ONLY", "").lower() in {"1", "true", "yes", "on"}:
+        return _fallback(artifact_type, task, project_details), "demo fallback (local-only mode)"
     if not api_key:
         return _fallback(artifact_type, task, project_details), "demo fallback (no API key configured)"
 
@@ -80,7 +83,11 @@ Retrieved local context:
 
 Generate the requested artifact. Avoid destructive actions and do not include real secrets."""
     try:
-        client = OpenAI(api_key=api_key)
+        base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        hosts = tuple(x.strip().lower() for x in os.getenv("AIDEVOPS_AI_ALLOWED_HOSTS", "api.openai.com,openrouter.ai").split(","))
+        validate_destination(base_url, hosts)
+        prompt = redact(prompt, [api_key])
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=0)
         response = client.responses.create(
             model=model,
             instructions=SYSTEM_PROMPT,

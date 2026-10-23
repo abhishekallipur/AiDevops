@@ -90,9 +90,12 @@ def analyze_and_plan(store: JobStore, settings: Settings, job_id: str) -> JobRec
             raise ValidationError("job has no source path")
         profile = analyze_path(job.source_path, settings)
         job.profile = profile
+        job.source_path = profile.root
         job.project_name = job.project_name or Path(profile.root).name
         store.save(job)
 
+        if profile.project_type.value == "unknown" and "Dockerfile" not in profile.existing_dockerfiles:
+            raise ValidationError("Could not identify a runnable application. Select the app's source folder containing its package manifest or entry point, or provide a reviewed Dockerfile.")
         plan = build_plan(profile, settings)
         job.plan = plan
         store.save(job)

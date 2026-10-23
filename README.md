@@ -181,3 +181,36 @@ Observed: both Docker workflows passed and Streamlit health/HTML returned 200. T
 Open the UI and choose **Upload a project**, **Use a folder**, or **Try an example project**. Aidevops explains what it found, shows your suggested setup and lets you download all setup files together. Review the details, then give permission to run checks. Project files, commands and logs are available in expandable sections. The interface includes gentle animations, reduced-motion support and a responsive layout. It does not publish your app.
 
 Latest verification after UI redesign: **89 passed, 1 skipped**, including 12 UI interaction tests; desktop browser welcome/review navigation and folder validation checked.
+
+## Build & preview locally (2026-10-23)
+
+After reviewing a project, open **Build & open your app**:
+1. **Prepare build snapshot** copies permitted source and generated setup into a separate workspace.
+2. Review the setup and approve that snapshot, then choose **Build my app**.
+3. Once the image is verified, separately approve startup, set the app's internal port and health-check path, then **Start local preview**.
+4. When the HTTP check passes, use **Open my app**. **Stop preview** removes the running container. **Remove preview resources** additionally removes its image and snapshot after confirmation.
+
+The panel polls every two seconds during build/start and every ten seconds while a preview runs; it stays idle otherwise. Web apps must listen on 0.0.0.0 inside the container; their exposed preview port is bound only to 127.0.0.1. No cloud resources are created. Runtime app output is withheld because it may contain secrets; filtered build logs remain available. Previews expire while the backend is running (up to 10s polling delay); expiry is reconciled after restart. Run one API process per data directory.
+
+Privacy settings (restart backend after changes):
+```text
+AIDEVOPS_LOCAL_ONLY=true
+AIDEVOPS_AI_ALLOWED_HOSTS=api.openai.com,openrouter.ai
+```
+Local-only disables external AI, not Docker/package-download network traffic. Destination defaults are HTTPS-only; request redaction is heuristic. **See what is sent to AI** displays the filtered request after analysis, not a pre-send consent screen.
+
+Real Docker smoke (creates only disposable sample resources, then removes its containers/images/snapshots):
+```powershell
+.\.venv\Scripts\python.exe tests/smoke_preview.py
+```
+Latest full suite: **108 passed, 1 skipped**. See docs/TESTING.md for evidence and known limits. Existing API servers must be restarted to load preview routes; Streamlit normally reloads changed source.
+
+## Project-aware packaging update
+
+Create a **new review** after updating to regenerate old Dockerfiles. Aidevops now distinguishes browser apps from Node servers: Create React App/Vite compile their assets and serve on8080; Next has a production-server strategy on3000; Node uses declared build/start scripts; FastAPI/Flask objects get appropriate web servers; static index.html projects work without a package manifest. Existing Dockerfiles can be reviewed and used. A single nested app is selected automatically; repositories with several apps ask you to choose one.
+
+Supported is not the same as universally runnable. Private dependencies, databases, missing secrets, custom layouts/build outputs and invalid code can require configuration or a supplied Dockerfile. React(CRA),Vite,static HTML,Flask,FastAPI and Node runtime paths have live checks; other strategies have narrower evidence in IMPLEMENTATION_STATUS.md. Set AIDEVOPS_BUILD_TIMEOUT_SECONDS=600 (default) for build deadlines; normal test timeout stays separate. Live build output is available in the build-log section.
+
+
+### Workspace navigation
+Add a project using an archive, a local folder, or the bundled example. An existing project opens **Build & preview** first: prepare a snapshot, review and approve its build, then start and open the local app. Suggested launch settings are filled automatically; **Advanced preview settings** contains ports, health checks, expiry and an optional runtime environment value. Use **Project overview**, **Setup files**, and **Checks & results** for findings, downloads and separately approved checks. The indigo/navy theme uses local CSS, responsive layouts and animations that respect reduced-motion preferences.

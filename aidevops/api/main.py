@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -26,6 +27,10 @@ from ..services import (
     generate_and_validate,
     run_pipeline,
 )
+from ..services.preview import PreviewService
+from ..planner.planner import prompt_preview
+from ..errors import ValidationError
+from ..privacy import redact
 
 log = get_logger("aidevops.api")
 
@@ -50,6 +55,19 @@ class JobSummary(BaseModel):
     project_name: str | None
     created_at: str
     updated_at: str
+
+
+class BuildApproval(BaseModel):
+    approved: bool = False
+    digest: str = Field(min_length=64, max_length=64)
+
+
+class StartApproval(BaseModel):
+    approved: bool = False
+    port: int = Field(ge=1, le=65535)
+    health_path: str = Field(default="/", max_length=256)
+    ttl_minutes: int = Field(default=30, ge=1, le=120)
+    environment: dict[str, str] = Field(default_factory=dict, max_length=30)
 
 
 class HealthResponse(BaseModel):
@@ -77,7 +95,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     configure_logging()
 
+    @asynccontextmanager
+    async def lifespan(application):
+        application.state.previews = PreviewService(settings, application.state.store)
+        try:
+            yield
+        finally:
+            application.state.previews.close()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Autonomous AI DevOps Engineer",
         version=__version__,
         description=(
@@ -117,7 +144,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
-            content={"error": "validation_error", "message": "invalid request", "detail": exc.errors()},
+            content={"error": "validation_error", "message": "invalid request", "detail": [
+                {"loc": e["loc"], "type": e["type"], "msg": e["msg"]} for e in exc.errors()]},
         )
 
     @app.exception_handler(Exception)
@@ -254,6 +282,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "artifacts": [a.model_dump() for a in job.artifacts],
             "validation": [v.model_dump() for v in job.validation],
         }
+
+    @app.get("/api/jobs/{job_id}/ai-prompt")
+    def ai_prompt(job_id: str):
+        job = app.state.store.get(job_id)
+        if not job.profile:
+            raise ValidationError("Analyze the project before viewing its AI summary")
+        return {"local_only": settings.local_only, **{
+            key: redact(value, [settings.openai_api_key]) for key, value in prompt_preview(job.profile).items()}}
+
+    @app.get("/api/jobs/{job_id}/previews")
+    def previews(job_id: str):
+        app.state.store.get(job_id)
+        return [r for r in app.state.previews.all() if r["job_id"] == job_id]
+
+    @app.post("/api/jobs/{job_id}/previews", status_code=201)
+    def snapshot(job_id: str):
+        return app.state.previews.snapshot(job_id)
+
+    @app.get("/api/previews/{identity}")
+    def preview(identity: str):
+        return app.state.previews.get(identity)
+
+    @app.post("/api/previews/{identity}/build", status_code=202)
+    def build_preview(identity: str, body: BuildApproval):
+        return app.state.previews.approve_build(identity, body.digest, body.approved)
+
+    @app.post("/api/previews/{identity}/start", status_code=202)
+    def start_preview(identity: str, body: StartApproval):
+        return app.state.previews.approve_start(identity, body.approved, body.port,
+            body.health_path, body.ttl_minutes, body.environment)
+
+    @app.post("/api/previews/{identity}/stop")
+    def stop_preview(identity: str):
+        return app.state.previews.stop(identity)
+
+    @app.post("/api/previews/{identity}/cleanup")
+    def cleanup_preview(identity: str):
+        return app.state.previews.cleanup(identity)
+
+    @app.get("/api/previews/{identity}/logs")
+    def preview_logs(identity: str):
+        return app.state.previews.logs(identity)
 
     return app
 

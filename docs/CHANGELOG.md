@@ -3,6 +3,33 @@
 Newest first. Entries record date, summary, affected files, reason, checks run,
 and outcome. Failures are appended as corrections, never rewritten away.
 
+## 2026-10-23 — Fix application detection and frontend Docker startup
+
+Confirmed actual user React/CRA failure: generic Node image omitted the frontend compile/serve step and started a nonexistent Node entry, with wrong default preview port. Added evidence-based frontend/runtime strategies across CRA,Vite,Next,Node,Python web apps and plain static sites; retained existing Dockerfiles; choose a single nested app root or explain ambiguity; unknown/unlaunchable projects fail actionably. New runtime metadata flows into generator and preview defaults. Browser bundles include build-time dependencies; production assets use unprivileged Nginx8080 with SPA routing and normalized asset base. Node custom build/start scripts and FastAPI/Flask application objects are honored. Added live bounded build-log updates and separate configurable600s build timeout.
+
+Changed: analyzer/analyzer.py,models.py,planner/planner.py,generator/artifacts.py,services/pipeline.py,services/preview.py,execution/runner.py,config.py,ui/preview_panel.py,ui/streamlit_app.py,.env.example. Added tests/test_frontends.py and tests/smoke_frontends.py; docs/todo-working.png captures actual app interaction. Updated required documentation. Existing user source/old reviews/snapshots preserved; a fresh local-only review and30-minute preview demonstrate the corrected todo app.
+
+Checks: `.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs` →123 passed,1 skipped (Windows symlink privileges); compileall/pip check passed. `.\.venv\Scripts\python.exe tests/smoke_frontends.py --source "C:\Users\abhishek a\Downloads\todo_react_app-master\todo_react_app-master"` →actual CRA app image/HTML/JS/SPA route passed, disposable resources removed. `.\.venv\Scripts\python.exe tests/smoke_frontends.py` →static,Vite,Flask,FastAPI image builds and HTTP checks passed, disposable resources removed. Browser actual todo preview rendered and created a task. Next production strategy is unit-tested only; no new live claims for Java/Go/Rust/Django/Streamlit.
+
+Development test failures: port-reconciliation assumption text and a Next executable-path assertion changed with the new behavior; corrected and full suite rerun. Initial inspection script hit Windows console Unicode output while displaying old logs; no source or runtime state was changed by that read failure. These checks do not establish universal support for arbitrary repositories/private services/invalid source. Existing Dockerfile paths still need inputs allowed by snapshot filtering.
+
+## 2026-10-23 — Snapshot-approved image builds and local previews
+
+Implemented the existing user's approved next milestone: shared outbound AI privacy filtering, an after-analysis request preview, local-only mode/trusted HTTPS provider settings; immutable filtered source+artifact build snapshots; separate build and startup approvals; background image builds with independent image/label verification; local127.0.0.1 previews and startup HTTP health probes; stop/cancel/expiry, restart reconciliation and label-guarded cleanup. Runtime limits and bounded build logs apply; runtime logs are withheld to avoid arbitrary secret output. Optional runtime environment is ephemeral input, not stored in job/preview records. UI polls every2s during build/start and every10s for running previews and provides build/start/open/stop/remove controls. No cloud actions or live AI requests were performed.
+
+Changed: config.py, db.py, api/main.py, execution/runner.py and registry.py, planner/planner.py and provider.py, ui/streamlit_app.py, legacy generator.py, .env.example, tests/test_ui.py. Added: privacy.py, services/preview.py, ui/preview_panel.py, tests/test_preview.py, tests/smoke_preview.py. Updated all required project documentation. Legacy image-build tool now directs callers to the snapshot workflow; normal review contracts remain unchanged. Existing database connections now close explicitly.
+
+Baseline:89 passed,1 skipped. A development full run found a UI fake/response-shape mismatch; added list validation and covered new controls. Initial real Docker smoke achieved Python/Node READY and expected build/start failures but exited with a Windows temporary database file lock. Root cause: SQLite context managers commit but do not close connections. Explicit connection close in both stores fixed it. Subsequent real smoke exited0 and removed all smoke-owned resources.
+
+Verification commands:
+- `.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs` →108 passed,1 skipped (Windows symlink privileges).
+- `.\.venv\Scripts\python.exe -m compileall -q aidevops tests generator.py` →exit0.
+- `.\.venv\Scripts\python.exe -m pip check` →No broken requirements found.
+- `.\.venv\Scripts\python.exe tests/smoke_preview.py` →Python and Node image builds/HTTP200 previews/stops passed; intentional BUILD_FAILED and START_FAILED classified correctly; all smoke-owned images/containers/snapshots removed; exit0.
+- Existing idle local backend identity verified, restarted on127.0.0.1:8000; live health/preview-list/prompt-preview routes checked. No existing jobs or user source were deleted.
+
+Limits: single API process per data directory (OS lock); max2 active operations/20 snapshots; expiry needs running backend; startup HTTP check is not ongoing app correctness monitoring. Docker builder cancellation/resource isolation remains best effort; base images/shared build cache are not pruned. Runtime envfile inherits Windows ACLs and Docker metadata retains values until container removal. Secret detection/redaction remains heuristic. Original review endpoints remain synchronous. Broader cloud deployment and production monitoring are still planned.
+
 ## 2026-10-22 — Guided interface for nontechnical users
 
 Replaced the dense Streamlit dashboard with a calm mint/green, three-step experience: Add your project → Review your setup → Run your checks. Main onboarding offers upload/folder tabs, folder-location help, a bundled example, and recent project navigation. Status names explain the next action. Technical evidence, commands, file contents and logs remain available in expanders. Download all setup files creates a real ZIP in memory. Explicit per-project consent and environment availability gate checks; no deployment capability is implied. Offline/reconnect, failure, no-tests, incomplete analysis and stopped states have plain-language guidance.
@@ -206,3 +233,10 @@ the test tool mounts the source repo read-only.
 **Outcome.** OK. Container execution is now VERIFIED (Python path). Remaining
 gaps: per-tool timeouts are not enforced, and non-Python container paths are
 untested.
+
+2026-10-23 UI verification follow-up: desktop browser confirmed new controls; saved docs/local-preview.png. Adaptive polling avoids continuously rerendering an idle form. Backend health and new routes returned200.
+
+
+## SaaS workspace refresh — 2026-10-23
+Replaced the mint review page with a navy sidebar, indigo accents, soft neutral workspace, responsive hero and local CSS illustrations. Added subtle entrance/hover/floating animation with reduced-motion support and visible keyboard focus. Project screens open Build & preview first; Project overview, Setup files and Checks & results are separate tabs. Preview ports, HTTP path and expiry remain prefilled; optional configuration is under Advanced preview settings. Resource removal is collapsed. Existing backend APIs and explicit build/start/check approvals are preserved.
+Validation: 124 passed, 1 Windows symlink privilege skip; includes 15 UI AppTests covering navigation, approvals and exact default launch payload. Existing local Streamlit server restarted to load changed imported module/theme. Browser inspected narrow-screen welcome and existing project navigation; no desktop-width or assistive-technology audit. This change does not claim new runtime coverage for generated apps.

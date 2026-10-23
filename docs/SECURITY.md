@@ -15,3 +15,17 @@ Atomic SQLite transitions reject duplicate phase entry; stale-state saves cannot
 .env and data/ are ignored. Do not print secrets or persist provider responses/errors containing them. Secret scanning uses a denylist/regex and cannot guarantee absence. Arbitrary test output can itself contain sensitive data and is persisted; generic output redaction is not implemented. No dependency-vulnerability/SAST scan was run.
 
 No production/cloud/destructive operations were performed. Future infrastructure, permission or destructive actions must have explicit approval and independent verification.
+
+## Privacy and local previews — 2026-10-23
+
+Final AI egress filtering now covers both planner and legacy generator. Known credential URLs, tokens/private keys, assignment patterns and absolute paths are redacted; incomplete private keys block. HTTPS provider hosts default api.openai.com/openrouter.ai; AIDEVOPS_AI_ALLOWED_HOSTS extends the trusted list. AIDEVOPS_LOCAL_ONLY disables both external AI paths. Unknown secret formats and malicious metadata can evade heuristics. The prompt preview is after analysis, not permission-before-send. Prior source filtering/output scanning alone were insufficient; the new filter is an additional boundary, not proof of zero disclosure.
+
+Build snapshots exclude known secret paths/symlinks/caches and block recognizable secrets in ordinary source. Approval identifies a hashed source+artifact copy. Builds execute generated Dockerfile instructions with network and Docker builder privileges; runtime CPU/memory limits do not constrain the builder equally. Use trusted projects. Raw source is not uploaded to AI by this workflow. Build output is bounded and heuristically redacted; runtime output is not exported to avoid arbitrary secret echoes.
+
+Preview run uses label-checked image IDs, random loopback port bindings, no host source/socket mount, 1GiB/2CPU/256PID limits, dropped capabilities and no-new-privileges. Runtime values are not sent to AI or saved in review records; they use a short-lived env file removed after startup/on restart. POSIX0600 is requested; Windows uses inherited ACLs, so use a dedicated OS user/secured data directory. Docker administrators can inspect environment values until container removal. This is local trust, not an encrypted secrets vault.
+
+Stop/cleanup verify ownership labels. Daemon unavailability yields visible error instead of verified removal. Build cancellation kills the Docker client; daemon-side work may require Docker inspection if interrupted. Restart never replays approvals. Expiry requires the backend; an app may remain running through an outage until reconciliation. No authentication was added: bind API/UI to loopback and do not expose to untrusted networks. New preview worker data supports one API process, enforced by OS lock.
+
+## Application-aware packaging — 2026-10-23
+
+Frontend and Python strategy inference is static; package scripts/Python source are never executed during analysis. Builds still execute untrusted dependency/build scripts only after snapshot approval. Frontend serving runs Nginx as USER101 on8080 with writable state only under/tmp; capability restrictions remain unchanged. Existing Dockerfiles are preserved for explicit review, so they retain their own build behavior; source snapshot secret/path filtering still applies. Live build output is bounded and heuristically redacted, not a guarantee against every arbitrary secret string. No private source was sent to external AI during actual todo verification.

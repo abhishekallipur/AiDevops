@@ -14,6 +14,7 @@ import shlex
 from pathlib import Path
 
 from ..config import Settings
+from ..errors import ValidationError
 from ..logging_config import get_logger
 from ..models import (
     DeploymentPlan,
@@ -37,6 +38,7 @@ DEFAULT_BASE_IMAGE = {
     ProjectType.GO: "gcr.io/distroless/static-debian12",
     ProjectType.RUST: "debian:bookworm-slim",
     ProjectType.UNKNOWN: "alpine:3.20",
+    ProjectType.STATIC: "nginx:stable-alpine",
 }
 
 _IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/\-]*(?::[-\w.]+)?(?:@sha256:[a-f0-9]{64})?$")
@@ -72,11 +74,19 @@ def _python_dockerfile(profile: ProjectProfile, plan: DeploymentPlan, base: str)
     elif "pyproject.toml" in manifests:
         install = "COPY . .\nRUN pip install --no-cache-dir ."
     else:
-        install = "# No dependency manifest detected; add your install step here."
-        notes.append("No Python dependency manifest detected; install step is a placeholder.")
+        install = "# No dependency manifest detected; only the standard library is assumed."
+        notes.append("No Python dependency manifest detected; third-party requirements cannot be inferred reliably.")
 
     default_cmd = ["python", "app.py"] if profile.entry_points else ["python", "-m", "app"]
     cmd, fallback_used = _safe_cmd(plan.run_command, default_cmd)
+    if profile.python_app and profile.framework == "FastAPI":
+        install += "\nRUN pip install --no-cache-dir uvicorn"
+        cmd = ["python", "-m", "uvicorn", profile.python_app, "--host", "0.0.0.0", "--port", str(profile.suggested_port or 8000)]
+    elif profile.python_app and profile.framework in {"Flask", "Django"}:
+        install += "\nRUN pip install --no-cache-dir gunicorn"
+        cmd = ["gunicorn", "--bind", "0.0.0.0:" + str(profile.suggested_port or 8000), profile.python_app]
+    elif profile.framework == "Streamlit" and profile.entry_points:
+        cmd = ["streamlit", "run", profile.entry_points[0], "--server.address", "0.0.0.0", "--server.port", "8501"]
     if fallback_used:
         notes.append("Plan run_command was unsafe or unusable; defaulted to a conventional command.")
 
@@ -102,11 +112,43 @@ CMD {_json_array(cmd)}
 
 
 def _node_dockerfile(profile: ProjectProfile, plan: DeploymentPlan, base: str) -> tuple[str, list[str]]:
+    if profile.web_build_tool:
+        install = "npm ci --include=dev --no-audit --no-fund" if "package-lock.json" in profile.dependency_manifests else "npm install --include=dev --no-audit --no-fund"
+        if profile.web_build_tool == "next":
+            return (HEADER + "FROM node:22-slim\nWORKDIR /app\nENV NEXT_TELEMETRY_DISABLED=1\n"
+                + f"COPY package*.json ./\nRUN {install}\nCOPY . .\nRUN npm run build\n"
+                + 'RUN chown -R node:node /app\nENV NODE_ENV=production\nUSER node\nEXPOSE 3000\nCMD ["./node_modules/.bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]\n', [])
+        output = profile.build_output or ("build" if profile.web_build_tool == "cra" else "dist")
+        if not re.fullmatch(r"[\w./-]+", output) or ".." in Path(output).parts or Path(output).is_absolute():
+            raise ValueError("Invalid frontend build output directory")
+        # CRA homepage may point at GitHub Pages; a local preview serves at /.
+        build = "PUBLIC_URL=/ npm run build" if profile.web_build_tool == "cra" else "npm run build -- --base=/"
+        return (
+            HEADER + "FROM node:22-slim AS build\nWORKDIR /app\nCOPY package*.json ./\n"
+            + f"RUN {install}\nCOPY . .\nRUN {build}\n\n"
+            + _static_runtime(f"COPY --from=build /app/{output}/ /usr/share/nginx/html/\n"), []
+        )
     notes: list[str] = []
-    cmd, fallback_used = _safe_cmd(plan.run_command, ["node", "index.js"])
+    if "start" in profile.package_scripts:
+        default = ["npm", "start"]
+    elif profile.node_main:
+        default = ["node", profile.node_main]
+    else:
+        entry = next((p for p in profile.entry_points if "/" not in p and p.endswith((".js", ".mjs", ".cjs"))), None)
+        if entry is None and "Dockerfile" not in profile.existing_dockerfiles:
+            raise ValidationError("No supported Node startup was found. Add a package.json start script or a Dockerfile, or select the actual app subfolder.")
+        default = ["node", entry or "index.js"]
+    cmd, fallback_used = (default, False) if "start" in profile.package_scripts or profile.node_main else _safe_cmd(plan.run_command, default)
     if fallback_used:
         notes.append("Plan run_command was unsafe or unusable; defaulted to `node index.js`.")
     expose = f"EXPOSE {plan.exposed_port}\n" if plan.exposed_port else ""
+    install = "npm ci --omit=dev --no-audit --no-fund" if "package-lock.json" in profile.dependency_manifests else "npm install --omit=dev --no-audit --no-fund"
+    build_step = ""
+    if "build" in profile.package_scripts:
+        install = install.replace("--omit=dev", "--include=dev")
+        build_step = "RUN npm run build\n"
+    if not base.startswith("node:"):
+        base = "node:22-slim"
     return (
         f"""{HEADER}FROM {base}
 
@@ -114,8 +156,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN {install}
 COPY . .
+{build_step}
 
 USER node
 {expose}
@@ -123,6 +166,40 @@ CMD {_json_array(cmd)}
 """,
         notes,
     )
+
+
+def _static_runtime(copy_instruction: str) -> str:
+    # Bypass the image entrypoint scripts; all writable paths stay under /tmp.
+    return '''FROM nginx:stable-alpine
+COPY <<'AIDEVOPS_NGINX' /etc/nginx/nginx.conf
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+events { worker_connections 1024; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /dev/stdout;
+    client_body_temp_path /tmp/client_temp;
+    proxy_temp_path /tmp/proxy_temp;
+    fastcgi_temp_path /tmp/fastcgi_temp;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi_temp;
+    server {
+        listen 8080;
+        root /usr/share/nginx/html;
+        index index.html;
+        location / { try_files $uri $uri/ /index.html; }
+    }
+}
+AIDEVOPS_NGINX
+''' + copy_instruction + '''USER 101
+EXPOSE 8080
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
+'''
+
+
+def _static_dockerfile(profile, plan, base):
+    return HEADER + _static_runtime("COPY . /usr/share/nginx/html/\n"), []
 
 
 def _java_maven_dockerfile(profile: ProjectProfile, plan: DeploymentPlan, base: str) -> tuple[str, list[str]]:
@@ -234,6 +311,7 @@ _BUILDERS = {
     ProjectType.GO: _go_dockerfile,
     ProjectType.RUST: _rust_dockerfile,
     ProjectType.UNKNOWN: _unknown_dockerfile,
+    ProjectType.STATIC: _static_dockerfile,
 }
 
 
@@ -350,6 +428,8 @@ def build_artifact_contents(
     a workflow. This keeps the mock and LLM paths consistent.
     """
 
+    if profile.suggested_port:
+        plan = plan.model_copy(update={"exposed_port": profile.suggested_port})
     requested = {spec.kind for spec in plan.artifacts}
     if plan.exposed_port:
         requested.add("docker-compose.yml")
@@ -364,7 +444,12 @@ def build_artifact_contents(
         notes_extra.append("Plan base_image was invalid; used a known-good default.")
 
     builder = _BUILDERS.get(profile.project_type, _unknown_dockerfile)
-    dockerfile, df_notes = builder(profile, plan, base)
+    existing = Path(profile.root) / "Dockerfile"
+    if "Dockerfile" in profile.existing_dockerfiles and existing.is_file() and not existing.is_symlink() and existing.stat().st_size <= 200_000:
+        dockerfile = existing.read_text(encoding="utf-8", errors="replace")
+        df_notes = ["Using the project's existing Dockerfile. Review its build commands before approval."]
+    else:
+        dockerfile, df_notes = builder(profile, plan, base)
     df_notes = notes_extra + df_notes
 
     results: list[tuple[str, str, str, list[str]]] = [

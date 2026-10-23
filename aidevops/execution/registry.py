@@ -181,9 +181,8 @@ def _container_test(args: ContainerArgs, ctx: ExecutionContext) -> ToolResult:
 
 
 def _container_build(args: ContainerArgs, ctx: ExecutionContext) -> ToolResult:
-    from .runner import run_container_build
-
-    return run_container_build(ctx=ctx)
+    return ToolResult(ExecutionStatus.BLOCKED,
+        reason="Use Build & open your app: image builds require a reviewed source snapshot and its fingerprint.")
 
 
 # --------------------------------------------------------------------------- #

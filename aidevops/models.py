@@ -80,6 +80,7 @@ class StateTransition(BaseModel):
 class ProjectType(str, Enum):
     PYTHON = "python"
     NODE = "node"
+    STATIC = "static"
     JAVA_MAVEN = "java_maven"
     JAVA_GRADLE = "java_gradle"
     GO = "go"
@@ -109,6 +110,13 @@ class ProjectProfile(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     files_scanned: int = 0
     truncated: bool = False
+    web_build_tool: Literal["cra", "vite", "next"] | None = None
+    package_scripts: list[str] = Field(default_factory=list)
+    node_main: str | None = None
+    build_output: str | None = None
+    suggested_port: int | None = None
+    suggested_health_path: str = "/"
+    python_app: str | None = None
 
     @field_validator("confidence")
     @classmethod

@@ -77,6 +77,8 @@ class Settings:
     openai_model: str = "gpt-4.1-mini"
     llm_timeout_seconds: float = 30.0
     llm_max_retries: int = 1
+    local_only: bool = False
+    ai_allowed_hosts: tuple[str, ...] = ("api.openai.com", "openrouter.ai")
 
     analyzer_max_files: int = 2000
     analyzer_max_file_bytes: int = 200_000
@@ -86,6 +88,7 @@ class Settings:
     max_extract_files: int = 5000
 
     exec_timeout_seconds: int = 120
+    build_timeout_seconds: int = 600
     exec_max_output_bytes: int = 100_000
     exec_backend: str = "auto"  # auto | container | disabled
     container_image: str = "python:3.12-slim"
@@ -95,7 +98,7 @@ class Settings:
     # ------------------------------------------------------------------ helpers
     @property
     def llm_configured(self) -> bool:
-        return bool(self.openai_api_key)
+        return bool(self.openai_api_key) and not self.local_only
 
     @property
     def llm_mode(self) -> str:
@@ -140,6 +143,8 @@ def load_settings(*, load_dotenv_file: bool = True) -> Settings:
         openai_model=_env_str("OPENAI_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
         llm_timeout_seconds=_env_float("AIDEVOPS_LLM_TIMEOUT_SECONDS", 30.0),
         llm_max_retries=_env_int("AIDEVOPS_LLM_MAX_RETRIES", 1),
+        local_only=_env_bool("AIDEVOPS_LOCAL_ONLY", False),
+        ai_allowed_hosts=tuple(x.strip().lower() for x in (_env_str("AIDEVOPS_AI_ALLOWED_HOSTS", "api.openai.com,openrouter.ai") or "").split(",") if x.strip()),
         analyzer_max_files=_env_int("AIDEVOPS_ANALYZER_MAX_FILES", 2000),
         analyzer_max_file_bytes=_env_int("AIDEVOPS_ANALYZER_MAX_FILE_BYTES", 200_000),
         analyzer_max_depth=_env_int("AIDEVOPS_ANALYZER_MAX_DEPTH", 8),
@@ -147,6 +152,7 @@ def load_settings(*, load_dotenv_file: bool = True) -> Settings:
         max_upload_bytes=_env_int("AIDEVOPS_MAX_UPLOAD_BYTES", 50_000_000),
         max_extract_files=_env_int("AIDEVOPS_MAX_EXTRACT_FILES", 5000),
         exec_timeout_seconds=_env_int("AIDEVOPS_EXEC_TIMEOUT_SECONDS", 120),
+        build_timeout_seconds=max(1, min(1800, _env_int("AIDEVOPS_BUILD_TIMEOUT_SECONDS", 600))),
         exec_max_output_bytes=_env_int("AIDEVOPS_EXEC_MAX_OUTPUT_BYTES", 100_000),
         exec_backend=_env_str("AIDEVOPS_EXEC_BACKEND", "auto") or "auto",
         container_image=_env_str("AIDEVOPS_CONTAINER_IMAGE", "python:3.12-slim")

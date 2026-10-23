@@ -115,3 +115,19 @@ Use SQLite write transactions for transitions and reject same-state phase entry;
 
 ## D12 — Guided nontechnical UI with progressive disclosure (2026-10-22)
 Keep Streamlit and existing API contracts; replace the developer-heavy dashboard with a three-step journey and meaningful next actions. Upload/example are first-class entry points; technical plans/logs/files stay accessible in expanders. Use actual backend data with explicit example/AI distinctions. Animations are decorative and respect reduced motion, never simulate workflow progress. No framework migration or new hosting service is needed.
+
+## D13 — Separate snapshot-bound preview lifecycle (2026-10-23)
+
+Preserve existing review JobState/API contracts. Store preview phases separately in SQLite, use an approved SHA-256 source+artifact snapshot, verify resulting image IDs and separately approve startup. Run long operations with a two-thread worker and serialize record changes. Enforce one backend process per data directory with an OS lock rather than imply multiprocess scheduling. On restart, reconcile known resources and interrupt unrecoverable work; never automatically replay side effects.
+
+## D14 — Local-only exposure and limited logs (2026-10-23)
+
+Docker selects a random host port bound to127.0.0.1. Verify an owned running container and HTTP2xx/3xx without following redirects or using environment proxies. Health establishes startup availability only. Withhold runtime logs rather than risk printing arbitrary secrets after restart; provide bounded filtered build logs. Runtime environment is ephemeral input, not persisted configuration. Expiry is backend-maintained, not guaranteed while the service is offline.
+
+## D15 — Final AI privacy boundary (2026-10-23)
+
+Use shared outbound redaction and trusted HTTPS destinations for modern and legacy paths; offer local-only mode and an after-analysis request preview. Keep claims limited: regex detection does not guarantee no secrets and schemas do not establish semantic safety. Source snapshots additionally block recognizable secrets before Docker builds.
+
+## D16 — Deterministic runtime strategies before model guesses (2026-10-23)
+
+A src/index.js file can be browser JSX, not a Node server. Infer package build/start behavior and Python application objects, generate framework-specific production packaging and carry its port into previews. CRA/Vite compile then serve assets; generic Node honors scripts; custom projects can supply a reviewed Dockerfile. Fail on unrecognized/ambiguous startup rather than imply a guessed container works. A single nested app root is selected consistently through analysis/snapshot. Existing approvals/snapshots remain immutable; regeneration creates a fresh review.

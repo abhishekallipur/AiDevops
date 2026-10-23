@@ -100,3 +100,15 @@ Test execution now snapshots filtered source into a temporary host directory, mo
 
 ## Guided UI layer — 2026-10-22
 The Streamlit client now separates plain-language display mappings (ui/presentation.py) and local responsive/animation styling (ui/styles.css) from HTTP actions (ui/streamlit_app.py). Internal states map to three user-facing stages without changing backend states. Technical details use collapsed expanders. File bundles are generated in memory from the actual artifact response; no source files are modified. Approval remains an explicit API request after per-project user consent, and unavailable test environments disable the run action.
+
+## Local preview subsystem — 2026-10-23
+
+PreviewService owns fixed Docker operations behind explicit API schemas. Its separate SQLite document store records snapshots, digest-bound approval, build/start phases, image/container identities, results and expiry without changing existing JobState contracts. Two worker threads perform build/start asynchronously; calls return 202. An OS file lock prevents multiple API processes sharing this preview data directory. Original review endpoints remain synchronous.
+
+A filtered bounded source copy receives generated artifacts and is hashed before approval. Build rehashes before execution, creates a unique labelled image/tag and validates its Docker identity. Start uses the verified image ID, a separately approved port/path/environment and random loopback host port; owned-container inspection and bounded HTTP probing decide READY. Cleanup verifies labels and guarded snapshot location. A 10s watcher handles container presence and expiry while the server is running. Restart reconciliation does not replay side effects. Runtime environment values stay out of persistence; an ephemeral env file and Docker metadata still require OS-local trust.
+
+privacy.py is a final egress boundary for both AI paths. It redacts known patterns/paths and validates configured HTTPS hosts. prompt_preview exposes the filtered planner prompt after analysis. Neither schema validation nor heuristic redaction guarantees safety against arbitrary secret formats or prompt injection.
+
+## Runtime strategy inference — 2026-10-23
+
+Analyzer reads bounded package metadata/Python AST without executing source; it records build tool, script names, application import, build output and serving recommendations. Nested-root resolution updates job.source_path so analysis and snapshot use the same source tree. Generator selects browser compile+static serving versus production Node or Python web commands; existing Dockerfile overrides template selection. Model command/base/port suggestions cannot override a recognized browser serving strategy. Preview persists recommended port/path and refines a single EXPOSE port from image inspection. Background build output is bounded/redacted and persisted during execution; UI polls only during active/running previews.

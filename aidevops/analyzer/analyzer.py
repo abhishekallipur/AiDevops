@@ -22,6 +22,7 @@ from pathlib import Path
 from ..config import Settings
 from ..logging_config import get_logger
 from ..models import Evidence, ProjectProfile, ProjectType
+from ..errors import ValidationError
 
 log = get_logger("aidevops.analyzer")
 
@@ -285,6 +286,18 @@ def _parse_dependencies(manifest: str, content: str) -> list[str]:
             if not line or line.startswith("#") or line.startswith("-"):
                 continue
             deps.append(re.split(r"[<>=!\[;]", line)[0].strip())
+    elif manifest == "pyproject.toml":
+        import tomllib
+        try:
+            data = tomllib.loads(content)
+            values = data.get("project", {}).get("dependencies", [])
+            if isinstance(values, list):
+                deps.extend(re.split(r"[<>=!\[; ]", v)[0] for v in values if isinstance(v, str))
+            poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+            if isinstance(poetry, dict):
+                deps.extend(k for k in poetry if k != "python")
+        except (ValueError, TypeError, AttributeError):
+            return []
     elif manifest == "package.json":
         import json
 
@@ -342,6 +355,13 @@ def _detect_type(files: list[str]) -> tuple[ProjectType, list[Evidence], list[st
                 add(manifest, "rust crate descriptor")
 
     if not scores:
+        if "index.html" in present:
+            add("index.html", "static website entry page")
+            return ProjectType.STATIC, evidence, manifests
+        python_files = [p for p in files if "/" not in p and p.endswith(".py")]
+        if python_files:
+            add(python_files[0], "Python source without a dependency manifest")
+            return ProjectType.PYTHON, evidence, manifests
         return ProjectType.UNKNOWN, evidence, manifests
 
     best = max(scores.items(), key=lambda item: item[1])[0]
@@ -356,6 +376,17 @@ def analyze_path(root: Path | str, settings: Settings) -> ProjectProfile:
         raise NotADirectoryError(f"{root} is not a directory")
 
     files, warnings, truncated = _collect_files(root, settings)
+    root_manifests = {p for p in files if "/" not in p and p in MANIFEST_FILES}
+    if not root_manifests and "index.html" not in files and "Dockerfile" not in files and not any("/" not in p and p.endswith(".py") for p in files):
+        nested = {str(Path(p).parent) for p in files if Path(p).name in {"package.json", "pyproject.toml", "requirements.txt", "pom.xml", "build.gradle", "go.mod", "Cargo.toml"}
+                  and "/" in p and not any(part in {"test", "tests", "examples", "fixtures"} for part in Path(p).parts)}
+        if len(nested) == 1:
+            subdir = next(iter(nested))
+            profile = analyze_path(root / subdir, settings)
+            profile.warnings.append(f"Project detected in subfolder {subdir}; using that as the build root")
+            return profile
+        if len(nested) > 1:
+            raise ValidationError("Multiple application folders found. Select the specific app folder to build: " + ", ".join(sorted(nested)[:8]))
     profile = ProjectProfile(root=str(root), warnings=list(warnings), truncated=truncated)
     profile.files_scanned = len(files)
     present = set(files)
@@ -372,6 +403,7 @@ def analyze_path(root: Path | str, settings: Settings) -> ProjectProfile:
         ProjectType.JAVA_GRADLE: "Java",
         ProjectType.GO: "Go",
         ProjectType.RUST: "Rust",
+        ProjectType.STATIC: "HTML/CSS/JavaScript",
     }
     profile.language = language_map.get(project_type)
 
@@ -383,6 +415,11 @@ def analyze_path(root: Path | str, settings: Settings) -> ProjectProfile:
                 profile.evidence.append(Evidence(path=path, reason="conventional entry point"))
 
     # Tests ----------------------------------------------------------------
+    if project_type == ProjectType.PYTHON and not profile.entry_points:
+        scripts = [p for p in files if "/" not in p and p.endswith(".py") and p != "__init__.py"]
+        if len(scripts) == 1:
+            profile.entry_points.append(scripts[0])
+            profile.evidence.append(Evidence(path=scripts[0], reason="only top-level Python script"))
     test_dirs = {"tests", "test", "spec", "__tests__"}
     for path in files:
         parts = Path(path).parts
@@ -467,6 +504,79 @@ def analyze_path(root: Path | str, settings: Settings) -> ProjectProfile:
     profile.dependencies = sorted(set(d.strip() for d in dependencies if d.strip()))[:80]
     profile.entry_points = sorted(set(profile.entry_points))[:20]
     profile.declared_ports = sorted(ports)[:10]
+
+    # Runtime behavior comes from the root package manifest, not a guess based
+    # on finding a src/index.js file (which may contain browser-only JSX).
+    if project_type == ProjectType.NODE:
+        import json
+        try:
+            package = json.loads(_read_text(root / "package.json", settings.analyzer_max_file_bytes) or "{}")
+            if not isinstance(package, dict):
+                package = {}
+        except ValueError:
+            package = {}
+        scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+        profile.package_scripts = sorted(k for k, v in scripts.items() if isinstance(k, str) and isinstance(v, str))
+        dependencies = {}
+        for section in ("dependencies", "devDependencies"):
+            if isinstance(package.get(section), dict):
+                dependencies.update(package[section])
+        build = scripts.get("build", "")
+        if isinstance(build, str) and "react-scripts build" in build:
+            profile.web_build_tool, profile.build_output = "cra", "build"
+            profile.framework = "React (Create React App)"
+        elif isinstance(build, str) and "vite build" in build:
+            profile.web_build_tool, profile.build_output = "vite", "dist"
+            profile.framework = "Vite" + (" / React" if "react" in dependencies else " / Vue" if "vue" in dependencies else "")
+            for config in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts"):
+                text = _read_text(root / config, settings.analyzer_max_file_bytes) or ""
+                match = re.search(r"\boutDir\s*:\s*['\"]([\w./-]+)['\"]", text)
+                if match and not Path(match[1]).is_absolute() and ".." not in Path(match[1]).parts:
+                    profile.build_output = match[1]
+        elif isinstance(build, str) and "next build" in build:
+            profile.web_build_tool = "next"
+            profile.framework = "Next.js"
+        main = package.get("main")
+        if isinstance(main, str) and main in present and not main.startswith("-"):
+            profile.node_main = main
+        if profile.web_build_tool:
+            profile.suggested_port = 3000 if profile.web_build_tool == "next" else 8080
+            profile.suggested_health_path = "/"
+            profile.evidence.append(Evidence(path="package.json", reason=f"{profile.web_build_tool} build script; browser assets require static HTTP serving"))
+    elif project_type == ProjectType.STATIC:
+        profile.framework = "Static website"
+        profile.suggested_port = 8080
+
+    if project_type == ProjectType.PYTHON:
+        import ast
+        for candidate in sorted(profile.entry_points, key=lambda p: (len(Path(p).parts), p)):
+            if any(part in {"tests", "test", "examples"} for part in Path(candidate).parts):
+                continue
+            text = _read_text(root / candidate, settings.analyzer_max_file_bytes) or ""
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                continue
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                    function = node.value.func
+                    name = function.id if isinstance(function, ast.Name) else function.attr if isinstance(function, ast.Attribute) else ""
+                    target = node.targets[0]
+                    if name in {"FastAPI", "Flask"} and isinstance(target, ast.Name):
+                        profile.python_app = candidate[:-3].replace("/", ".") + ":" + target.id
+                        profile.framework = name
+                        profile.suggested_port = 8000 if name == "FastAPI" else 5000
+                        profile.suggested_health_path = "/health" if re.search(r"(?:get|route)\s*\(\s*['\"]/health['\"]", text) else "/"
+                        break
+            if profile.python_app:
+                break
+        if profile.framework == "Django":
+            wsgi = next((p for p in files if p.endswith("/wsgi.py") and "tests/" not in p), None)
+            if wsgi:
+                profile.python_app = wsgi[:-3].replace("/", ".") + ":application"
+                profile.suggested_port = 8000
+        if profile.framework == "Streamlit":
+            profile.suggested_port = 8501
 
     # Confidence -----------------------------------------------------------
     confidence = 0.3 if project_type != ProjectType.UNKNOWN else 0.1

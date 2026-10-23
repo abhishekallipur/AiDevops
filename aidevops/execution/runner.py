@@ -12,6 +12,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import uuid
+import time
 from copy import copy
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def _truncate(text: str, max_bytes: int) -> tuple[str, bool]:
 
 
 def _subprocess(
-    argv: list[str], *, cwd: Path, timeout: int, max_output: int
+    argv: list[str], *, cwd: Path, timeout: int, max_output: int, cancel=None, on_output=None
 ) -> tuple[int | None, str, bool, str | None]:
     """Run a fixed argv. Returns (exit_code, output, truncated, blocked_reason)."""
 
@@ -55,14 +56,31 @@ def _subprocess(
     def drain():
         nonlocal truncated
         with proc.stdout:
-            while chunk := proc.stdout.read(8192):
+            while chunk := proc.stdout.read1(8192):
                 available = max(0, max_output - len(captured))
                 captured.extend(chunk[:available])
                 truncated = truncated or len(chunk) > available
+                if on_output:
+                    try:
+                        on_output(bytes(captured).decode("utf-8", errors="replace"))
+                    except Exception:
+                        pass  # Final output is still returned even if live-log persistence fails.
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
     try:
-        proc.wait(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while proc.poll() is None:
+            if cancel is not None and cancel.is_set():
+                proc.kill()
+                proc.wait()
+                reader.join(timeout=2)
+                return None, "Operation cancelled", truncated, "cancelled"
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            try:
+                proc.wait(timeout=min(0.2, max(0.01, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                pass
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()

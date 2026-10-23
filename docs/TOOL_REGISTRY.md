@@ -18,3 +18,24 @@ Python installs requirements.txt or pyproject.toml, then pytest; Node uses npm c
 Records contain tool, args, status, timestamps, output, exit code and reason. Any non-OK scheduled result fails job verification. SUCCEEDED means only the scheduled checks passed, never a deployment or image health claim.
 
 To add a tool, define typed arguments, fixed handler/argv, kind, permissions, approval and limits; add policy and failure tests; update memory, security docs and this catalog.
+
+## Approved preview operations — 2026-10-23
+
+Legacy container_build_image now returns BLOCKED with guidance to the fingerprint-bound preview flow. The new service owns a fixed set of operations (no arbitrary command endpoint):
+
+| API action | Permission / behavior |
+|---|---|
+| POST /api/jobs/{job_id}/previews | Prepare filtered source+artifact snapshot; no Docker execution |
+| POST /api/previews/{id}/build | approved=true + matching digest; 202; fixed Docker build; label and image ID inspection |
+| POST /api/previews/{id}/start | separate approved=true; validated port/path/TTL/environment; 202; fixed constrained Docker run |
+| POST /api/previews/{id}/stop | cancel active client operation or remove only matching-label container |
+| POST /api/previews/{id}/cleanup | refuse active task; remove owned container/image and guarded snapshot; UI asks explicit confirmation |
+| GET /api/jobs/{job_id}/previews and GET /api/previews/{id} | Read persisted state; no environment values |
+| GET /api/previews/{id}/logs | bounded filtered build log; runtime logs withheld |
+| GET /api/jobs/{job_id}/ai-prompt | filtered planner request preview after analysis |
+
+Build deadline=min(global,600s); startup HTTP probe up to45s; startup Docker client deadline30s. Runtime limits:1GiB,2CPUs,256PIDs, capabilities dropped,no-new-privileges, max-size=1m/max-file=1 Docker logs. No host volume/socket mounts. Random port bound127.0.0.1 only. Network remains available. Max2 active operations/20 unremoved snapshots; maxTTL120min, expiry poll10s while backend alive. Docker build has no equivalent hard per-build CPU/memory limit or network allowlist; cancellation of daemon-side builder work is best effort. Shared builder caches/base images are not pruned.
+
+## Build strategy changes — 2026-10-23
+
+Preview builds now use AIDEVOPS_BUILD_TIMEOUT_SECONDS (default600; env loader bounds1..1800) rather than the120s test deadline. Test/tool timeout behavior otherwise stays unchanged. Build output callbacks persist bounded filtered logs while Docker runs. Runtime port defaults derive from the selected strategy/image EXPOSE metadata. Static serving uses Nginx USER101 on8080 with /tmp state paths, retaining dropped-capability runtime policy; no extra host mounts or Docker permissions were added.

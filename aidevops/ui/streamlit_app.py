@@ -11,6 +11,7 @@ import httpx
 import streamlit as st
 
 from aidevops.ui.presentation import FILES, RESULTS, TOOLS, badge, journey, status
+from aidevops.ui.preview_panel import render as render_preview_panel
 
 API_URL = os.getenv("AIDEVOPS_API_URL", "http://localhost:8000").rstrip("/")
 SAMPLE_REPO = str(Path(__file__).resolve().parents[2] / "examples" / "sample_python_app")
@@ -73,21 +74,21 @@ def create_and_run(payload=None, files=None):
     st.rerun()
 
 
-st.set_page_config(page_title="Aidevops · Your project, one step closer", page_icon="✳", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Aidevops · Project workspace", page_icon="✳", layout="wide", initial_sidebar_state="expanded")
 st.set_option("client.toolbarMode", "viewer")
 st.markdown("<style>" + Path(__file__).with_name("styles.css").read_text(encoding="utf-8") + "</style>", unsafe_allow_html=True)
 health, health_error = api("GET", "/health")
 
 with st.sidebar:
-    st.markdown('<div class="aid-brand"><span class="aid-mark">✳</span> aidevops<span style="font-size:.65rem;letter-spacing:.04em;margin-left:4px">LOCAL</span></div>', unsafe_allow_html=True)
-    st.caption("A little guidance. A clearer next step.")
+    st.markdown('<div class="aid-brand"><span class="aid-mark">a</span> aidevops<span class="aid-local">LOCAL</span></div>', unsafe_allow_html=True)
+    st.caption("YOUR PROJECT WORKSPACE")
     st.write("")
     st.button("＋ New project", on_click=new_project, use_container_width=True, type="primary")
-    st.markdown('<div class="aid-section">Your recent reviews</div>', unsafe_allow_html=True)
+    st.markdown('<div class="aid-section">Workspace projects</div>', unsafe_allow_html=True)
     jobs, jobs_error = api("GET", "/api/jobs") if not health_error else ([], None)
     jobs = jobs or []
     if jobs_error:
-        st.caption("Your recent reviews could not load.")
+        st.caption("Workspace projects could not load.")
     if jobs:
         by_id = {j["id"]: j for j in jobs}
         options = list(by_id)
@@ -121,14 +122,15 @@ if health_error:
         st.code(r".\.venv\Scripts\python.exe -m uvicorn aidevops.api.main:app --host 127.0.0.1 --port 8000", language="powershell")
     st.stop()
 
+st.markdown('<div class="aid-topbar"><span>Workspace <span class="aid-slash">/</span> Projects</span><span class="aid-connected">● Service connected</span></div>', unsafe_allow_html=True)
 job_id = st.session_state.get("job_id")
 if not job_id or st.session_state.get("new_project"):
-    st.markdown('<div class="aid-hero"><div class="aid-orbit"></div><div class="aid-kicker">From project to peace of mind</div><h1>Your project.<br>A clear next step.</h1><p>Understand what your app needs, get its setup files, and check that the basics work. We’ll guide you through it.</p></div>', unsafe_allow_html=True)
-    st.markdown(journey("PENDING"), unsafe_allow_html=True)
+    st.markdown('<div class="aid-hero"><div class="aid-hero-copy"><div class="aid-kicker">LESS SETUP. MORE BUILDING.</div><h1>Your project.<br><span>Ready for its next chapter.</span></h1><p>Bring your code. Get a tailored setup. Build and open your app, all from one workspace.</p><div class="aid-hero-tags"><span>↗ Project-aware setup</span><span>◉ Local previews</span><span>✓ You approve each run</span></div></div><div class="aid-launch-art" aria-hidden="true"><div class="aid-art-title"><i></i> YOUR NEXT LAUNCH</div><div class="aid-art-row"><span class="aid-art-icon">01</span><div><b>Bring your project</b><small>ZIP archive or local folder</small></div><em>↗</em></div><div class="aid-art-line"></div><div class="aid-art-row"><span class="aid-art-icon">02</span><div><b>Make it runnable</b><small>Review · build · preview</small></div><em>✦</em></div><div class="aid-art-footer">Your code. A clearer workflow.</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="aid-section-heading"><h2>Create your next workspace</h2><span>Start with your source code</span></div>', unsafe_allow_html=True)
     main, aside = st.columns([1.7, 1], gap="large")
     with main:
-        st.subheader("Let’s start with your project")
-        st.write("Choose how you’d like to add it. We’ll read the files and prepare a suggested setup.")
+        st.subheader("Add your project")
+        st.write("Upload an archive or paste a folder location. We’ll identify your app and prepare its setup.")
         upload_tab, folder_tab = st.tabs(["Upload a project", "Use a folder"])
         with upload_tab:
             upload = st.file_uploader("Choose your project archive", type=["zip", "tar", "gz", "tgz"], help="Upload your app’s source files as a ZIP or TAR archive. Aidevops cannot analyze a screenshot or a finished app installer.")
@@ -146,7 +148,7 @@ if not job_id or st.session_state.get("new_project"):
                 else:
                     create_and_run(payload={"source_path": source.strip()})
     with aside:
-        callout("Just exploring? Start here.", "Try the included example project to see a real review. You don’t need to upload anything.")
+        callout("Take a quick test drive.", "Explore the workflow with an included sample app. No project files needed.")
         if st.button("Try an example project", use_container_width=True):
             create_and_run(payload={"source_path": SAMPLE_REPO})
         st.caption("Uses a bundled sample app. The plan is AI-generated only when a provider is available; otherwise it is clearly labelled as an example plan.")
@@ -155,7 +157,7 @@ if not job_id or st.session_state.get("new_project"):
     for col, (number, title, detail) in zip(cards, [
         ("01", "Understand your app", "See the project type and what Aidevops found in your files."),
         ("02", "Get a starting setup", "Download packaging and check configuration prepared for your project."),
-        ("03", "Approve, then check", "Decide when to run checks. Nothing is published to the cloud."),
+        ("03", "Build & open your app", "Approve a build, launch a local preview, and open it in your browser."),
     ]):
         col.markdown(f'<div class="aid-feature"><span class="aid-kicker">{number}</span><b>{title}</b><p>{detail}</p></div>', unsafe_allow_html=True)
     st.stop()
@@ -176,8 +178,7 @@ with refresh:
     if st.button("Refresh", use_container_width=True):
         st.rerun()
 st.markdown(badge(title, kind), unsafe_allow_html=True)
-st.markdown(journey(state), unsafe_allow_html=True)
-callout(title, guidance)
+st.caption(guidance)
 
 if state == "PENDING":
     if st.button("Start review", type="primary"):
@@ -198,98 +199,122 @@ if job.get("error") or state == "FAILED":
         with st.expander("Technical error details"):
             st.code(job["error"], language="text")
 
-if profile:
-    st.subheader("Here’s what we found")
-    cols = st.columns(3)
-    cols[0].metric("Project type", profile.get("language") or profile["project_type"])
-    cols[1].metric("App framework", profile.get("framework") or "Not identified")
-    cols[2].metric("Files reviewed", profile.get("files_scanned", 0))
-    if not profile.get("test_locations"):
-        st.info("We did not find project tests. File checks can still run, but they cannot show whether your app works correctly.")
-    if profile.get("truncated"):
-        st.warning("This project was larger than the review limit. The findings cover only part of its files.")
-    with st.expander("What these findings are based on"):
-        st.caption("These are clues from your files, not a full assessment of your app.")
-        for evidence in profile.get("evidence", []):
-            st.write(f"{evidence['path']} — {evidence['reason']}")
-        for warning in profile.get("warnings", []):
-            st.warning(warning)
-
-if plan:
-    st.subheader("Your suggested setup")
-    st.markdown(badge("AI-generated suggestion" if plan["source"] == "llm" else "Example plan · not AI-generated", "info" if plan["source"] == "llm" else "warn"), unsafe_allow_html=True)
-    st.write("Aidevops has prepared a starting point for packaging your app and reviewing its setup. These files still need a person’s review before real-world use.")
-    if plan["source"] != "llm":
-        st.caption("This plan uses preset rules because AI planning was unavailable. It is based on the files we found.")
-    with st.expander("Read the full plan and assumptions"):
-        st.write(plan["summary"])
-        for step in plan.get("steps", []):
-            st.write(f"**{step['title']}** — {step['description']}")
-            if step.get("command"):
-                st.code(step["command"], language="bash")
-        st.caption("Commands shown here are suggestions. Only the app’s built-in checks can run.")
-        for text in plan.get("assumptions", []) + plan.get("risks", []):
-            st.write("• " + text)
-
-st.subheader("Your setup files")
-st.caption("You can download these now. Downloading does not change your app or publish it.")
-data, artifact_error = api("GET", f"/api/jobs/{job_id}/artifacts")
-if artifact_error:
-    st.error(artifact_error)
-else:
-    artifacts = (data or {}).get("artifacts", [])
-    if not artifacts:
-        st.info("Your setup files will appear here after the review finishes.")
-    else:
-        bundle = io.BytesIO()
-        with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for artifact in artifacts:
-                archive.writestr(artifact["path"], artifact["content"])
-        st.download_button("Download all setup files", data=bundle.getvalue(), file_name="aidevops-setup.zip", mime="application/zip", use_container_width=True)
-        reports = {r["artifact_path"]: r for r in data.get("validation", [])}
-        for artifact in artifacts:
-            name, description = FILES.get(artifact["kind"], (artifact["path"], "A generated setup file for your project."))
-            with st.expander(f"{name} · {artifact['path']}"):
-                st.write(description)
-                st.caption("Static file checks passed. This does not prove the app builds or runs." if artifact.get("verified") else "This file needs review before use.")
-                for note in artifact.get("notes", []):
-                    st.warning(note)
-                for issue in reports.get(artifact["path"], {}).get("issues", []):
-                    st.write(f"{issue['severity'].capitalize()}: {issue['message']}")
-                st.code(artifact["content"], language="dockerfile" if artifact["kind"] == "Dockerfile" else "text")
-                st.download_button("Download " + artifact["path"].split("/")[-1], data=artifact["content"], file_name=artifact["path"].split("/")[-1], key="dl_" + artifact["path"])
-
-if state == "AWAITING_APPROVAL":
-    st.divider()
-    st.subheader("Ready to check your project?")
-    st.write("We’ll review the packaging instructions and, if tests were found, run them in a temporary environment. This may download dependencies and run your project’s code with internet access. Your original project files will not be edited.")
-    st.caption("This does not build a deployable image or publish your app. You can download the setup files without running checks.")
-    needs_docker = bool(profile and profile.get("test_locations"))
-    unavailable = needs_docker and (not health["docker_available"] or health.get("exec_backend") == "disabled")
-    if unavailable:
-        st.warning("Project tests are unavailable right now. Start Docker and enable container checks in the service settings, then refresh. You can still review and download your setup files.")
-    approved = st.checkbox("I have reviewed the setup and allow these checks to run", key="approve_" + job_id)
-    if st.button("Approve & run checks", type="primary", disabled=not approved or unavailable, use_container_width=True):
-        with st.status("Running your project checks…", expanded=True) as progress:
-            result, error = api("POST", f"/api/jobs/{job_id}/execute", json={"approved": True})
-            if error:
-                progress.update(label="Checks could not start", state="error")
-                st.error(error)
-            else:
-                progress.update(label=status(result["state"])[0], state="complete" if result["state"] == "SUCCEEDED" else "error")
+build_tab, overview_tab, files_tab, checks_tab = st.tabs(["Build & preview", "Project overview", "Setup files", "Checks & results"])
+with build_tab:
+    if job.get("artifacts"):
+        poll_key = "preview_poll_" + job_id
+        poll_interval = st.session_state.get(poll_key)
+        @st.fragment(run_every=poll_interval)
+        def local_preview():
+            next_interval = render_preview_panel(api, job_id, profile)
+            if next_interval != poll_interval:
+                st.session_state[poll_key] = next_interval
                 st.rerun()
+        local_preview()
+    if not job.get("artifacts"):
+        st.info("Finish the project review to prepare your build and local preview.")
+with overview_tab:
+    if profile:
+        st.subheader("Here’s what we found")
+        cols = st.columns(3)
+        cols[0].metric("Project type", profile.get("language") or profile["project_type"])
+        cols[1].metric("App framework", profile.get("framework") or "Not identified")
+        cols[2].metric("Files reviewed", profile.get("files_scanned", 0))
+        if not profile.get("test_locations"):
+            st.info("We did not find project tests. File checks can still run, but they cannot show whether your app works correctly.")
+        if profile.get("project_type") == "unknown":
+            st.warning("We could not identify a runnable app in this folder. Select the app's source folder or provide its Dockerfile. Documents, screenshots and individual config files alone are not a runnable project.")
+        if profile.get("web_build_tool"):
+            st.caption("Build strategy: " + ("production Node server" if profile["web_build_tool"] == "next" else "compile browser assets, then serve them over HTTP") + f" · app port {profile.get('suggested_port')}")
+        if profile.get("truncated"):
+            st.warning("This project was larger than the review limit. The findings cover only part of its files.")
+        with st.expander("What these findings are based on"):
+            st.caption("These are clues from your files, not a full assessment of your app.")
+            for evidence in profile.get("evidence", []):
+                st.write(f"{evidence['path']} — {evidence['reason']}")
+            for warning in profile.get("warnings", []):
+                st.warning(warning)
 
-if job.get("executions"):
-    st.subheader("What happened in your checks")
-    for record in job["executions"]:
-        with st.container(border=True):
-            st.write("**" + TOOLS.get(record["tool"], record["tool"]) + "**")
-            st.markdown(badge(RESULTS.get(record["status"], record["status"]), "ok" if record["status"] == "ok" else "warn"), unsafe_allow_html=True)
-            if record.get("reason"):
-                st.write(record["reason"])
-            with st.expander("View technical log"):
-                st.caption(f"{record['tool']} · exit code {record.get('exit_code')}")
-                st.code(record.get("output") or "No additional output.", language="text")
+    if plan:
+        st.subheader("Your suggested setup")
+        st.markdown(badge("AI-generated suggestion" if plan["source"] == "llm" else "Example plan · not AI-generated", "info" if plan["source"] == "llm" else "warn"), unsafe_allow_html=True)
+        st.write("Aidevops has prepared a starting point for packaging your app and reviewing its setup. These files still need a person’s review before real-world use.")
+        if plan["source"] != "llm":
+            st.caption("This plan uses preset rules because AI planning was unavailable. It is based on the files we found.")
+        with st.expander("Read the full plan and assumptions"):
+            st.write(plan["summary"])
+            for step in plan.get("steps", []):
+                st.write(f"**{step['title']}** — {step['description']}")
+                if step.get("command"):
+                    st.code(step["command"], language="bash")
+            st.caption("Commands shown here are suggestions. Only the app’s built-in checks can run.")
+            for text in plan.get("assumptions", []) + plan.get("risks", []):
+                st.write("• " + text)
+
+with files_tab:
+    st.subheader("Your setup files")
+    st.caption("You can download these now. Downloading does not change your app or publish it.")
+    data, artifact_error = api("GET", f"/api/jobs/{job_id}/artifacts")
+    if artifact_error:
+        st.error(artifact_error)
+    else:
+        artifacts = (data or {}).get("artifacts", [])
+        if not artifacts:
+            st.info("Your setup files will appear here after the review finishes.")
+        else:
+            bundle = io.BytesIO()
+            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for artifact in artifacts:
+                    archive.writestr(artifact["path"], artifact["content"])
+            st.download_button("Download all setup files", data=bundle.getvalue(), file_name="aidevops-setup.zip", mime="application/zip", use_container_width=True)
+            reports = {r["artifact_path"]: r for r in data.get("validation", [])}
+            for artifact in artifacts:
+                name, description = FILES.get(artifact["kind"], (artifact["path"], "A generated setup file for your project."))
+                with st.expander(f"{name} · {artifact['path']}"):
+                    st.write(description)
+                    st.caption("Static file checks passed. This does not prove the app builds or runs." if artifact.get("verified") else "This file needs review before use.")
+                    for note in artifact.get("notes", []):
+                        st.warning(note)
+                    for issue in reports.get(artifact["path"], {}).get("issues", []):
+                        st.write(f"{issue['severity'].capitalize()}: {issue['message']}")
+                    st.code(artifact["content"], language="dockerfile" if artifact["kind"] == "Dockerfile" else "text")
+                    st.download_button("Download " + artifact["path"].split("/")[-1], data=artifact["content"], file_name=artifact["path"].split("/")[-1], key="dl_" + artifact["path"])
+
+with checks_tab:
+    if state == "AWAITING_APPROVAL":
+        st.divider()
+        st.subheader("Ready to check your project?")
+        st.write("We’ll review the packaging instructions and, if tests were found, run them in a temporary environment. This may download dependencies and run your project’s code with internet access. Your original project files will not be edited.")
+        st.caption("This does not build a deployable image or publish your app. You can download the setup files without running checks.")
+        needs_docker = bool(profile and profile.get("test_locations"))
+        unavailable = needs_docker and (not health["docker_available"] or health.get("exec_backend") == "disabled")
+        if unavailable:
+            st.warning("Project tests are unavailable right now. Start Docker and enable container checks in the service settings, then refresh. You can still review and download your setup files.")
+        approved = st.checkbox("I have reviewed the setup and allow these checks to run", key="approve_" + job_id)
+        if st.button("Approve & run checks", type="primary", disabled=not approved or unavailable, use_container_width=True):
+            with st.status("Running your project checks…", expanded=True) as progress:
+                result, error = api("POST", f"/api/jobs/{job_id}/execute", json={"approved": True})
+                if error:
+                    progress.update(label="Checks could not start", state="error")
+                    st.error(error)
+                else:
+                    progress.update(label=status(result["state"])[0], state="complete" if result["state"] == "SUCCEEDED" else "error")
+                    st.rerun()
+
+    if job.get("executions"):
+        st.subheader("What happened in your checks")
+        for record in job["executions"]:
+            with st.container(border=True):
+                st.write("**" + TOOLS.get(record["tool"], record["tool"]) + "**")
+                st.markdown(badge(RESULTS.get(record["status"], record["status"]), "ok" if record["status"] == "ok" else "warn"), unsafe_allow_html=True)
+                if record.get("reason"):
+                    st.write(record["reason"])
+                with st.expander("View technical log"):
+                    st.caption(f"{record['tool']} · exit code {record.get('exit_code')}")
+                    st.code(record.get("output") or "No additional output.", language="text")
+
+    if state != "AWAITING_APPROVAL" and not job.get("executions"):
+        st.info("Check results will appear here after you approve and run project checks.")
 
 with st.expander("Review details & controls"):
     st.caption(f"Review reference: {job_id}")

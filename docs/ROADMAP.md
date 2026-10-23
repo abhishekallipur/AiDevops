@@ -68,3 +68,13 @@ Current audit delivered timeout/output tests, real Python+Node container executi
 4. Browser desktop/mobile/accessibility checks; other runtime fixtures and actual image/remote CI checks; reproducible dependency lock and security scans.
 5. Review/commit existing untracked project and configure repository CI.
 6. Only then extend approval-gated Terraform/AWS/monitoring/recovery with explicit authorization. None was implemented in this audit.
+
+## Updated priorities — 2026-10-23
+
+Local snapshot/build/start/HTTP-check/stop/cleanup is now implemented and real Python+Node workflows verified. Preview background work, explicit approvals, expiry and restart reconciliation are implemented; original analyze/run/execute remains synchronous.
+
+Next: stronger runtime secret transport/OS ACLs and detection; browser/mobile/full workflow QA; continuous HTTP health checks; isolated builder resource/network controls and version-pinned reproducible builds; original-review background workers/crash reconciliation; then approval-gated cloud deployment and rollback. Runtime logs are intentionally withheld. AWS/Terraform/CloudWatch/recovery remain PLANNED.
+
+## Broader project support — 2026-10-23
+
+Actual CRA todo startup fixed and browser-verified; Vite/static/Flask/FastAPI live fixtures added. Next and other conventional runtime strategies need additional live fixtures. Remaining: Yarn/pnpm and workspace-aware installs,custom frontend output/base patterns,Next export/standalone modes,Python application factories,Java/Go/Rust live coverage,multi-service/database orchestration and private dependency configuration. Arbitrary files or incomplete repositories are not runnable applications; surface requirements rather than guarantee all inputs work.

@@ -256,3 +256,61 @@ def test_recent_review_can_be_opened(app):
     assert not app.exception
     assert app.session_state["job_id"] == JOB_ID
     assert any("Ready for your review" in m.value for m in app.markdown)
+
+
+def test_preview_build_consent_and_request(monkeypatch):
+    calls = []
+    record = {"id": "preview_test", "state": "AWAITING_BUILD_APPROVAL", "file_count": 3,
+              "digest": "a" * 64, "image_id": None, "log": "", "error": None}
+    def request(method, url, **kwargs):
+        path = urlparse(url).path
+        if path.endswith("/previews"):
+            return httpx.Response(200, json=[record])
+        if path.endswith("/build"):
+            calls.append(kwargs["json"])
+            return httpx.Response(202, json=record)
+        return fake_request(method, url, **kwargs)
+    monkeypatch.setattr(httpx, "request", request)
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    open_review(at)
+    assert not at.exception
+    assert next(b for b in at.button if b.label == "Build my app").disabled
+    next(c for c in at.checkbox if "approve building" in c.label).check().run()
+    next(b for b in at.button if b.label == "Build my app").click().run()
+    assert calls == [{"approved": True, "digest": "a" * 64}]
+
+
+def test_preview_start_consent_can_enable_form(monkeypatch):
+    record = {"id": "preview_test", "state": "BUILT", "file_count": 3,
+              "digest": "a" * 64, "image_id": "sha256:" + "a" * 64, "log": "", "error": None}
+    calls = []
+    def request(method, url, **kwargs):
+        path = urlparse(url).path
+        if path.endswith("/previews"):
+            return httpx.Response(200, json=[record])
+        if path.endswith("/start"):
+            calls.append(kwargs["json"])
+            return httpx.Response(202, json=record)
+        return fake_request(method, url, **kwargs)
+    monkeypatch.setattr(httpx, "request", request)
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    open_review(at)
+    assert not at.exception
+    assert next(b for b in at.button if b.label == "Start local preview").disabled
+    next(c for c in at.checkbox if "approve starting" in c.label).check().run()
+    assert not next(b for b in at.button if b.label == "Start local preview").disabled
+    next(b for b in at.button if b.label == "Start local preview").click().run()
+    assert calls == [{"approved": True, "port": 8080, "health_path": "/health",
+                      "ttl_minutes": 30, "environment": {}}]
+    assert any(e.label == "Advanced preview settings" for e in at.expander)
+    assert not at.exception
+
+
+def test_workspace_puts_build_before_supporting_details(app):
+    open_review(app)
+    assert [tab.label for tab in app.tabs] == [
+        "Build & preview", "Project overview", "Setup files", "Checks & results"
+    ]
+    assert any(b.label == "Prepare build snapshot" for b in app.tabs[0].button)
+    assert any(b.label == "Download all setup files" for b in app.tabs[2].get("download_button"))
+    assert not app.exception
