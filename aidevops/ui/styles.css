@@ -10,6 +10,9 @@ p,li { line-height:1.65; }
 [data-testid="stSidebar"] [data-baseweb="select"] * { color:#20253e; }
 [data-testid="stSidebar"] [data-testid="stExpander"] { background:#1c223c; border-color:#303854; }
 [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] { background:#6472f3; border-color:#6472f3; }
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.aid-sidebar-logout) { position:sticky; bottom:0; z-index:5; padding-top:.75rem; background:#151a30; }
+[data-testid="stSidebar"] .aid-sidebar-logout { display:flex; width:100%; justify-content:center; gap:.55rem; padding:.55rem .75rem; border:1px solid #414966; border-radius:.65rem; color:#f2d7db; background:#202640; text-decoration:none; }
+[data-testid="stSidebar"] .aid-sidebar-logout:hover { border-color:#e58a98; color:#fff; background:#352532; }
 [data-testid="stSidebar"] .aid-section { color:#98a3c5; margin-top:30px; }
 [data-testid="stSidebar"] .aid-footnote { color:#96a2c2; font-size:.75rem; margin-top:2rem; }
 [data-testid="stSidebar"] hr { border-color:#303854; }

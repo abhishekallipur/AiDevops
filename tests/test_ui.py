@@ -138,8 +138,14 @@ def open_review(app):
 def test_ui_renders_without_exception(app):
     assert not app.exception
     assert any(b.label == "Try an example project" for b in app.button)
+    assert "assistant_messages" in app.session_state
     assert any(t.label == "Upload a project" for t in app.tabs)
     assert any("Your project." in m.value for m in app.markdown)
+
+
+def test_ui_uses_native_theme_settings(app):
+    assert not any(r.label == "Choose app theme" for r in app.radio)
+    assert any(".stApp { background:#f6f7fb; color:var(--aid-ink); }" in m.value for m in app.markdown)
 
 
 def test_ui_shows_plan_and_collapsed_files(app):

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -9,6 +10,79 @@ def test_health(client):
     assert body["llm_mode"] == "mock"
     assert body["tool_count"] >= 4
     assert "x-request-id" in response.headers
+
+
+def test_assistant_chat_requires_provider_configuration(client):
+    response = client.post(
+        "/api/assistant/chat",
+        json={"messages": [{"role": "user", "content": "How do I run my app?"}]},
+    )
+
+    assert response.status_code == 503
+    assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_assistant_chat_surfaces_provider_errors(client, monkeypatch):
+    from aidevops.errors import ProviderError
+    from aidevops.planner.provider import OpenAIProvider
+
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        openai_api_key="test-openai-key",
+    )
+
+    def fail_chat(self, system, messages):
+        raise ProviderError("assistant provider request failed", detail="APIConnectionError")
+
+    monkeypatch.setattr(OpenAIProvider, "complete_chat", fail_chat)
+    response = client.post(
+        "/api/assistant/chat",
+        json={"messages": [{"role": "user", "content": "What is the weather?"}]},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "provider_error"
+    assert response.json()["message"] == "assistant provider request failed"
+
+
+def test_assistant_chat_uses_configured_provider_without_exposing_key(
+    client, monkeypatch
+):
+    from aidevops.planner.provider import OpenAIProvider
+
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        openai_api_key="test-openai-key",
+    )
+    calls = []
+
+    def complete_chat(self, system, messages):
+        calls.append((system, messages))
+        return "Use the project preview to verify the application."
+
+    monkeypatch.setattr(OpenAIProvider, "complete_chat", complete_chat)
+    response = client.post(
+        "/api/assistant/chat",
+        json={"messages": [{"role": "user", "content": "How do I preview my app?"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply": "Use the project preview to verify the application."
+    }
+    assert "test-openai-key" not in response.text
+    assert calls[0][1] == [
+        {"role": "user", "content": "How do I preview my app?"}
+    ]
+
+
+def test_assistant_chat_rejects_invalid_message_order(client):
+    response = client.post(
+        "/api/assistant/chat",
+        json={"messages": [{"role": "assistant", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 422
 
 
 def test_tools_catalog(client):

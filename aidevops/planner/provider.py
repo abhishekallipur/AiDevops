@@ -138,6 +138,43 @@ class OpenAIProvider:
             detail=type(last_exc).__name__ if last_exc else None,
         )
 
+    def complete_chat(self, system: str, messages: list[dict[str, str]]) -> str:
+        if self._settings.local_only:
+            raise ProviderError("External AI is disabled by local-only mode")
+        validate_destination(self._settings.openai_base_url, self._settings.ai_allowed_hosts)
+        safe_system = redact(system, [self._settings.openai_api_key])
+        safe_messages = [
+            {
+                "role": message["role"],
+                "content": redact(message["content"], [self._settings.openai_api_key]),
+            }
+            for message in messages
+        ]
+        client = self._client()
+        try:
+            response = client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": safe_system},
+                    *safe_messages,
+                ],
+                temperature=0.3,
+                max_completion_tokens=700,
+            )
+        except Exception as exc:  # noqa: BLE001 - provider errors are opaque
+            log.warning(
+                "assistant provider request failed",
+                extra={"event": "assistant_request", "tool": type(exc).__name__},
+            )
+            raise ProviderError(
+                "assistant provider request failed",
+                detail=type(exc).__name__,
+            ) from exc
+        content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ProviderError("assistant provider returned an empty response")
+        return redact(content, [self._settings.openai_api_key])
+
 
 def build_provider(settings: Settings) -> LLMProvider | None:
     """Return a provider when configured, else ``None`` (caller uses mock)."""

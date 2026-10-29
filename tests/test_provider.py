@@ -71,3 +71,36 @@ def test_raises_provider_error_after_retries(settings: Settings, monkeypatch):
     with pytest.raises(ProviderError):
         provider.complete_json("sys", "user")
     assert len(calls) == 2  # retries + 1
+
+
+def test_complete_chat_sends_only_redacted_messages(settings: Settings, monkeypatch):
+    provider = OpenAIProvider(
+        replace(settings, openai_api_key="test-provider-key", llm_max_retries=0)
+    )
+    client, calls = _client(
+        lambda kwargs: "Your application can be started with its documented command."
+    )
+    monkeypatch.setattr(provider, "_client", lambda *a, **k: client)
+
+    reply = provider.complete_chat(
+        "Help with DevOps.",
+        [
+            {
+                "role": "user",
+                "content": "My api_key=private-value. How do I start the app?",
+            }
+        ],
+    )
+
+    assert "documented command" in reply
+    assert "private-value" not in calls[0]["messages"][1]["content"]
+    assert calls[0]["max_completion_tokens"] == 700
+
+
+def test_complete_chat_rejects_local_only_mode(settings: Settings):
+    provider = OpenAIProvider(
+        replace(settings, openai_api_key="key", local_only=True)
+    )
+
+    with pytest.raises(ProviderError, match="local-only"):
+        provider.complete_chat("sys", [{"role": "user", "content": "hello"}])

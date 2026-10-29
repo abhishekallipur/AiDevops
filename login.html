@@ -1,0 +1,721 @@
+
+<!DOCTYPE html>
+<html lang="en" data-theme="__APP_THEME__">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI DevOps Engineer | Login</title>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+[data-theme="light"] {
+    color-scheme: light;
+}
+
+:root {
+    --cyan: #00d9ff;
+    --purple: #8238f4;
+    --blue: #477bff;
+    --text: #f2f4ff;
+    --muted: #b4bfdc;
+    --border: #343e77;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 28px;
+    color: var(--text);
+    overflow-x: hidden;
+    background:
+        radial-gradient(ellipse at 4% 24%, #32196b 0%, transparent 37%),
+        radial-gradient(ellipse at 96% 78%, #07507a 0%, transparent 34%),
+        linear-gradient(125deg, #101437, #0b183b);
+}
+
+body[data-theme="light"] {
+    --text: #20253e;
+    --muted: #68718a;
+    --border: #e0e5f0;
+    color-scheme: light;
+    background:
+        radial-gradient(ellipse at 4% 24%, #e5eaff 0%, transparent 37%),
+        radial-gradient(ellipse at 96% 78%, #dff5f1 0%, transparent 34%),
+        linear-gradient(125deg, #f6f7fb, #eef1fa);
+}
+
+body[data-theme="light"] .login-card {
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 25px 90px rgba(49, 64, 120, 0.14);
+}
+
+body[data-theme="light"] .brand-icon {
+    border-color: #cbd4ff;
+    color: #5261e8;
+    background: #f1f3ff;
+}
+
+body[data-theme="light"] .brand-name span,
+body[data-theme="light"] .tool-icon {
+    color: #5261e8;
+}
+
+body[data-theme="light"] .brand-tagline,
+body[data-theme="light"] .form-options {
+    color: #68718a;
+}
+
+body[data-theme="light"] .field input {
+    border-color: #d8deeb;
+    background: #f8f9fd;
+    color: #20253e;
+}
+
+body[data-theme="light"] .field input::placeholder,
+body[data-theme="light"] .password-toggle {
+    color: #7b849b;
+}
+
+body[data-theme="light"] .field input:focus {
+    border-color: #6878ed;
+    box-shadow: 0 0 0 3px rgba(82, 97, 232, 0.12);
+}
+
+body[data-theme="light"] .text-link {
+    color: #5261e8;
+}
+
+body[data-theme="light"] .message.success {
+    color: #18785f;
+}
+
+body[data-theme="light"] .welcome-section {
+    border-color: #e0e5f0;
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(115, 132, 255, 0.12), transparent 68%),
+        linear-gradient(160deg, #f3f5ff, #eaf1fb);
+}
+
+body[data-theme="light"] .cloud-icon {
+    border-color: #d6dcf0;
+    background: rgba(255, 255, 255, 0.75);
+}
+
+body[data-theme="light"] .tool {
+    border-color: #dce2f0;
+    background: rgba(255, 255, 255, 0.78);
+    color: #4e5872;
+}
+
+body[data-theme="light"] .tool:hover {
+    border-color: #6878ed;
+    background: #f0f2ff;
+}
+
+/* Animated background glow */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(
+        120deg,
+        transparent 25%,
+        rgba(91, 54, 204, 0.12),
+        transparent 75%
+    );
+    background-size: 200% 200%;
+    animation: backgroundFlow 9s ease-in-out infinite alternate;
+}
+
+@keyframes backgroundFlow {
+    from { background-position: 0% 0%; }
+    to { background-position: 100% 100%; }
+}
+
+.login-card {
+    width: min(940px, 100%);
+    min-height: 620px;
+    display: grid;
+    grid-template-columns: 1.25fr 0.95fr;
+    border: 1px solid var(--border);
+    border-radius: 27px;
+    overflow: hidden;
+    background: rgba(14, 20, 54, 0.94);
+    box-shadow: 0 25px 90px rgba(0, 0, 0, 0.3);
+    animation: appear 0.7s ease both;
+}
+
+@keyframes appear {
+    from {
+        opacity: 0;
+        transform: translateY(22px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.login-section {
+    padding: 42px 44px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin-bottom: 42px;
+}
+
+.brand-icon {
+    width: 52px;
+    height: 52px;
+    border: 1px solid #007ea8;
+    border-radius: 15px;
+    display: grid;
+    place-items: center;
+    color: var(--cyan);
+    font-size: 23px;
+    font-weight: 700;
+    background: rgba(0, 201, 255, 0.08);
+    box-shadow: inset 0 0 20px rgba(0, 217, 255, 0.05);
+}
+
+.brand-name {
+    font-weight: 800;
+    font-size: 17px;
+    letter-spacing: -0.5px;
+}
+
+.brand-name span {
+    color: var(--cyan);
+}
+
+.brand-tagline {
+    margin-top: 6px;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: #9ca8ca;
+}
+
+h1 {
+    font-size: clamp(27px, 3vw, 35px);
+    font-weight: 800;
+    letter-spacing: -1.7px;
+    margin-bottom: 15px;
+}
+
+.subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.8;
+    margin-bottom: 23px;
+}
+
+.field {
+    margin-bottom: 16px;
+}
+
+.field input {
+    width: 100%;
+    height: 50px;
+    padding: 0 15px;
+    border-radius: 13px;
+    border: 1px solid #404b85;
+    outline: none;
+    background: #202749;
+    color: white;
+    font: inherit;
+    font-size: 14px;
+    transition: 0.25s;
+}
+
+.field input::placeholder {
+    color: #a0a9c5;
+}
+
+.field input:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1);
+}
+
+.password-wrap {
+    position: relative;
+}
+
+.password-wrap input {
+    padding-right: 48px;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: none;
+    color: #c7d2ef;
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.form-options {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin: 19px 0;
+    font-size: 12px;
+    color: #d0d8f1;
+}
+
+.remember {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.remember input {
+    accent-color: var(--purple);
+    width: 14px;
+    height: 14px;
+}
+
+.text-link {
+    border: none;
+    background: transparent;
+    color: var(--cyan);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+}
+
+.text-link:hover {
+    text-decoration: underline;
+}
+
+.primary-btn {
+    width: 100%;
+    min-height: 49px;
+    border: 0;
+    border-radius: 12px;
+    color: white;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    background: linear-gradient(105deg, var(--purple), var(--blue));
+    box-shadow: 0 12px 25px rgba(99, 63, 241, 0.23);
+    transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+}
+
+.primary-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 32px rgba(91, 82, 255, 0.36);
+    filter: brightness(1.08);
+}
+
+.primary-btn:active {
+    transform: translateY(0);
+}
+
+.message {
+    margin-top: 15px;
+    min-height: 18px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #ffb8c2;
+}
+
+.message.success {
+    color: #66f2c2;
+}
+
+/* Right-side welcome panel */
+.welcome-section {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 40px 35px;
+    border-left: 1px solid #343d76;
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(115, 48, 211, 0.2), transparent 68%),
+        linear-gradient(160deg, #241c52, #101b3a);
+}
+
+.cloud-icon {
+    width: 76px;
+    height: 76px;
+    border: 1px solid #50569a;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.07);
+    display: grid;
+    place-items: center;
+    font-size: 30px;
+    margin-bottom: 18px;
+    box-shadow: 0 0 30px rgba(107, 82, 255, 0.1);
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-7px); }
+}
+
+.tools {
+    display: flex;
+    justify-content: center;
+    gap: 13px;
+    margin-bottom: 26px;
+}
+
+.tool {
+    width: 70px;
+    height: 74px;
+    border: 1px solid #2d376c;
+    border-radius: 14px;
+    background: rgba(12, 19, 52, 0.56);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #cbd4f0;
+    transition: 0.25s;
+}
+
+.tool:hover {
+    border-color: var(--cyan);
+    transform: translateY(-5px);
+    background: rgba(0, 217, 255, 0.07);
+}
+
+.tool-icon {
+    font-size: 20px;
+    color: var(--cyan);
+}
+
+.welcome-section h2 {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -1.6px;
+    margin-bottom: 13px;
+}
+
+.welcome-section p {
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--muted);
+    max-width: 290px;
+    margin-bottom: 24px;
+}
+
+.welcome-section .primary-btn {
+    max-width: 300px;
+}
+
+/* Responsive layout */
+@media (max-width: 700px) {
+    body {
+        padding: 16px;
+    }
+
+    .login-card {
+        grid-template-columns: 1fr;
+        max-width: 450px;
+        min-height: auto;
+        border-radius: 22px;
+    }
+
+    .login-section {
+        padding: 30px 25px;
+    }
+
+    .brand {
+        margin-bottom: 30px;
+    }
+
+    .welcome-section {
+        border-left: none;
+        border-top: 1px solid #343d76;
+        padding: 35px 25px;
+    }
+
+    .welcome-section h2 {
+        font-size: 28px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+</style>
+</head>
+
+<body>
+<main class="login-card">
+
+    <section class="login-section">
+        <div class="brand">
+            <div class="brand-icon">&lt;/&gt;</div>
+            <div>
+                <div class="brand-name"><span>AI</span> DevOps Engineer</div>
+                <div class="brand-tagline">BUILD · DEPLOY · SCALE</div>
+            </div>
+        </div>
+
+        <h1 id="form-title">Welcome back!</h1>
+        <p class="subtitle" id="form-subtitle">
+            Sign in with your administrator account.
+        </p>
+
+        <form id="auth-form">
+            <div class="field">
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    placeholder="Username"
+                    autocomplete="username"
+                    maxlength="64"
+                    pattern="[A-Za-z0-9_.\-]+"
+                    aria-label="Username"
+                    required
+                >
+            </div>
+
+            <div class="field" id="confirm-password-field" hidden>
+                <input
+                    type="password"
+                    id="confirm-password"
+                    name="confirm-password"
+                    placeholder="Confirm password"
+                    autocomplete="new-password"
+                    maxlength="1024"
+                    aria-label="Confirm password"
+                    disabled
+                >
+            </div>
+
+            <div class="field password-wrap">
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    placeholder="Password"
+                    autocomplete="current-password"
+                    maxlength="1024"
+                    aria-label="Password"
+                    minlength="8"
+                    required
+                >
+                <button
+                    class="password-toggle"
+                    type="button"
+                    id="toggle-password"
+                    aria-label="Show password"
+                    title="Show or hide password"
+                >⊙</button>
+            </div>
+
+            <button type="submit" class="primary-btn" id="submit-btn">
+                Login →
+            </button>
+        </form>
+        <div class="message" id="message" role="status" aria-live="polite"></div>
+        <button type="button" class="text-link" id="mode-toggle">
+            Need an account? Sign up
+        </button>
+        <button type="button" class="primary-btn" id="logout-btn" hidden>
+            Sign out
+        </button>
+    </section>
+
+    <aside class="welcome-section">
+        <div class="cloud-icon" aria-label="Cloud deployment">☁</div>
+
+        <div class="tools">
+            <div class="tool">
+                <span class="tool-icon">▤</span>
+                <span>Docker</span>
+            </div>
+            <div class="tool">
+                <span class="tool-icon">⚙</span>
+                <span>Jenkins</span>
+            </div>
+            <div class="tool">
+                <span class="tool-icon">⇧</span>
+                <span>Deploy</span>
+            </div>
+        </div>
+
+        <h2 id="welcome-title">Secure sign in</h2>
+        <p id="welcome-description">
+            Your administrator account is verified by the backend. Passwords
+            are stored as salted hashes in the application database. New accounts
+            can be created here.
+        </p>
+    </aside>
+
+</main>
+
+<script>
+const form = document.getElementById("auth-form");
+const usernameInput = document.getElementById("username");
+const passwordInput = document.getElementById("password");
+const confirmPasswordInput = document.getElementById("confirm-password");
+const confirmPasswordField = document.getElementById("confirm-password-field");
+const message = document.getElementById("message");
+const submitBtn = document.getElementById("submit-btn");
+const logoutBtn = document.getElementById("logout-btn");
+const passwordToggle = document.getElementById("toggle-password");
+const modeToggle = document.getElementById("mode-toggle");
+const formTitle = document.getElementById("form-title");
+const formSubtitle = document.getElementById("form-subtitle");
+let mode = "login";
+
+passwordToggle.addEventListener("click", () => {
+    const show = passwordInput.type === "password";
+    passwordInput.type = show ? "text" : "password";
+    passwordToggle.textContent = show ? "◉" : "⊙";
+    passwordToggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+});
+
+modeToggle.addEventListener("click", () => {
+    mode = mode === "login" ? "signup" : "login";
+    const isSignup = mode === "signup";
+
+    form.reset();
+    message.className = "message";
+    message.textContent = "";
+    formTitle.textContent = isSignup ? "Create your account" : "Welcome back!";
+    formSubtitle.textContent = isSignup
+        ? "Choose a username and a password with at least 8 characters."
+        : "Sign in with your account.";
+    passwordInput.autocomplete = isSignup ? "new-password" : "current-password";
+    passwordInput.minLength = isSignup ? 8 : 1;
+    confirmPasswordField.hidden = !isSignup;
+    confirmPasswordInput.disabled = !isSignup;
+    confirmPasswordInput.required = isSignup;
+    confirmPasswordInput.value = "";
+    submitBtn.textContent = isSignup ? "Create account →" : "Login →";
+    modeToggle.textContent = isSignup
+        ? "Already have an account? Sign in"
+        : "Need an account? Sign up";
+});
+
+form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    message.className = "message";
+    message.textContent = "";
+    if (mode === "signup" && passwordInput.value !== confirmPasswordInput.value) {
+        message.textContent = "Passwords do not match.";
+        confirmPasswordInput.focus();
+        return;
+    }
+    submitBtn.disabled = true;
+    submitBtn.textContent = mode === "signup" ? "Creating account..." : "Signing in...";
+
+    try {
+        const response = await fetch(
+            mode === "signup" ? "/api/auth/register" : "/api/auth/login",
+            {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+                username: usernameInput.value.trim(),
+                password: passwordInput.value
+            })
+            }
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(
+                data?.detail || data?.message || "Authentication failed."
+            );
+        }
+        if (mode === "signup") {
+            if (data?.registered !== true) {
+                throw new Error("The server did not confirm account creation.");
+            }
+
+            mode = "login";
+            formTitle.textContent = "Welcome back!";
+            formSubtitle.textContent = "Your account is ready. Sign in to continue.";
+            passwordInput.value = "";
+            passwordInput.autocomplete = "current-password";
+            passwordInput.minLength = 1;
+            confirmPasswordField.hidden = true;
+            confirmPasswordInput.disabled = true;
+            confirmPasswordInput.required = false;
+            confirmPasswordInput.value = "";
+            submitBtn.textContent = "Login →";
+            modeToggle.textContent = "Need an account? Sign up";
+            message.className = "message success";
+            message.textContent = "Account created. Please sign in.";
+            passwordInput.focus();
+            return;
+        }
+        if (data?.authenticated !== true) {
+            throw new Error("The server did not confirm the login.");
+        }
+
+        message.className = "message success";
+        message.textContent = `Signed in as ${data.username}. Redirecting...`;
+        window.location.assign(data.redirect_url);
+    } catch (error) {
+        message.textContent = error instanceof TypeError
+            ? "Could not reach the login service. Open this page at /login on the running backend."
+            : error.message;
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = mode === "signup" ? "Create account →" : "Login →";
+    }
+});
+
+logoutBtn.addEventListener("click", async () => {
+    logoutBtn.disabled = true;
+    try {
+        const response = await fetch("/api/auth/logout", {
+            method: "POST",
+            credentials: "same-origin"
+        });
+        if (!response.ok) {
+            throw new Error("Unable to sign out. Please try again.");
+        }
+        form.reset();
+        form.hidden = false;
+        logoutBtn.hidden = true;
+        message.className = "message";
+        message.textContent = "You have been signed out.";
+    } catch (error) {
+        message.className = "message";
+        message.textContent = error instanceof TypeError
+            ? "Could not reach the login service."
+            : error.message;
+    } finally {
+        logoutBtn.disabled = false;
+    }
+});
+</script>
+</body>
+</html>

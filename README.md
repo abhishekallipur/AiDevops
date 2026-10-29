@@ -2,7 +2,7 @@
 
 A local workspace that helps you turn an existing app into a Docker image and open a preview in your browser. Add your project, review the suggested setup, approve the build, and launch it locally.
 
-Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning is optional: without a provider key, it uses clearly labelled rule-based example plans.
+Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and the dashboard's robot assistant use the configured OpenAI-compatible provider. Without a provider key, the assistant is unavailable and planning uses clearly labelled rule-based example plans.
 
 ## Quick navigation
 
@@ -93,9 +93,14 @@ $env:AIDEVOPS_API_URL = "http://127.0.0.1:8000"
 
 Leave this terminal running too. Open **[http://localhost:8501](http://localhost:8501)**.
 
+The backend also serves the login and signup page at **[http://127.0.0.1:8000/login](http://127.0.0.1:8000/login)**. On a new database, the local demo credentials are `admin` / `admin123`. Sign-up creates additional accounts in the SQLite database; each username must be unique and passwords must be at least eight characters. After registration, the form returns to login and asks the new user to sign in; it does not automatically create a session. Set `AIDEVOPS_ADMIN_USERNAME` and `AIDEVOPS_ADMIN_PASSWORD` before the first backend startup to use different administrator credentials; a restart updates the configured admin password. Passwords are stored as salted hashes, and successful logins create expiring server-side sessions in HttpOnly cookies, then redirect to the Streamlit workspace. Keep the frontend running on port 8501 or set `AIDEVOPS_DASHBOARD_URL` to its URL. Change the demo password before exposing the backend to any network; public sign-up is enabled and the other API routes are not yet protected by login.
+
+Use the **🤖 AI Assistant** popover in the dashboard sidebar to ask general questions, including DevOps and workspace questions. It uses the backend's configured OpenAI-compatible provider; chat messages are sent to that provider and are kept only in the current Streamlit session. The assistant does not execute commands or change project files. Configure `OPENAI_API_KEY` in `.env` and restart the backend to enable it. Without a configured provider, the assistant reports that it is unavailable instead of returning a canned answer.
+
 | Address | What it opens |
 | --- | --- |
 | [localhost:8501](http://localhost:8501) | Aidevops workspace |
+| [localhost:8000/login](http://localhost:8000/login) | Backend admin login |
 | [localhost:8000/health](http://localhost:8000/health) | Backend connection/configuration status |
 | [localhost:8000/docs](http://localhost:8000/docs) | Interactive API reference |
 
@@ -203,7 +208,7 @@ See [.env.example](.env.example) for the full list. Common settings:
 | `AIDEVOPS_BUILD_TIMEOUT_SECONDS` | `600`; separate image-build timeout, capped at 1800 seconds. |
 | `AIDEVOPS_LOCAL_ONLY` | `false`; set `true` to disable external AI requests. |
 | `AIDEVOPS_AI_ALLOWED_HOSTS` | `api.openai.com,openrouter.ai`; permitted HTTPS AI destinations. |
-| `OPENAI_API_KEY` | Empty by default; optional planning provider credential. |
+| `OPENAI_API_KEY` | Empty by default; enables external AI planning and the dashboard assistant. |
 | `OPENAI_MODEL` | Provider model identifier; see the repository defaults in `.env.example`. |
 | `OPENAI_BASE_URL` | Optional compatible provider endpoint; must pass the destination policy. |
 | `AIDEVOPS_API_URL` | Frontend backend address; explicitly set it in terminal 2 as shown above. |

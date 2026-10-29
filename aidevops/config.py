@@ -94,6 +94,9 @@ class Settings:
     container_image: str = "python:3.12-slim"
 
     cors_origins: tuple[str, ...] = field(default_factory=tuple)
+    admin_username: str = "admin"
+    admin_password: str = "admin123"
+    dashboard_url: str = "http://127.0.0.1:8501"
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -158,6 +161,12 @@ def load_settings(*, load_dotenv_file: bool = True) -> Settings:
         container_image=_env_str("AIDEVOPS_CONTAINER_IMAGE", "python:3.12-slim")
         or "python:3.12-slim",
         cors_origins=cors_origins,
+        admin_username=_env_str("AIDEVOPS_ADMIN_USERNAME", "admin") or "admin",
+        admin_password=_env_str("AIDEVOPS_ADMIN_PASSWORD", "admin123") or "admin123",
+        dashboard_url=(
+            _env_str("AIDEVOPS_DASHBOARD_URL", "http://127.0.0.1:8501")
+            or "http://127.0.0.1:8501"
+        ),
     )
     settings.ensure_dirs()
     return settings

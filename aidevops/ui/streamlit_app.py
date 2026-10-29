@@ -13,7 +13,7 @@ import streamlit as st
 from aidevops.ui.presentation import FILES, RESULTS, TOOLS, badge, journey, status
 from aidevops.ui.preview_panel import render as render_preview_panel
 
-API_URL = os.getenv("AIDEVOPS_API_URL", "http://localhost:8000").rstrip("/")
+API_URL = os.getenv("AIDEVOPS_API_URL", "http://127.0.0.1:8000").rstrip("/")
 SAMPLE_REPO = str(Path(__file__).resolve().parents[2] / "examples" / "sample_python_app")
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 
@@ -25,14 +25,72 @@ def api(method, path, **kwargs):
         return None, "We could not connect to the project service. Please try again."
     if response.status_code >= 400:
         try:
-            detail = response.json().get("message", "Please try again.")
-        except (ValueError, AttributeError):
+            payload = response.json()
+        except (ValueError, AttributeError, TypeError):
+            payload = {}
+
+        detail = None
+        if isinstance(payload, dict):
+            detail = payload.get("detail") or payload.get("message")
+            if isinstance(detail, list):
+                detail = "; ".join(
+                    str(item.get("msg") if isinstance(item, dict) else item)
+                    for item in detail
+                    if item is not None and (not isinstance(item, dict) or item.get("msg") is not None)
+                ) or None
+
+        if not detail:
             detail = "The service could not complete this request. Please try again."
         return None, str(detail)
     try:
         return response.json(), None
     except ValueError:
         return None, "The service sent an unreadable response. Please try again."
+
+
+def render_ai_assistant() -> None:
+    if "assistant_messages" not in st.session_state:
+        st.session_state["assistant_messages"] = []
+
+    with st.popover("🤖 AI Assistant", use_container_width=True):
+        st.caption("Ask general questions, or get help with DevOps and this workspace. Messages are sent to the configured AI provider.")
+        for message in st.session_state["assistant_messages"]:
+            with st.chat_message(
+                message["role"],
+                avatar="🤖" if message["role"] == "assistant" else "🙂",
+            ):
+                st.write(message["content"])
+
+        assistant_error = st.session_state.get("assistant_error")
+        if assistant_error:
+            st.error(assistant_error)
+
+        with st.form("assistant_chat_form", clear_on_submit=True):
+            prompt = st.text_area(
+                "Message",
+                max_chars=2000,
+                placeholder="Ask anything...",
+                height=90,
+            )
+            submitted = st.form_submit_button("Send", use_container_width=True)
+
+        if submitted:
+            if not prompt.strip():
+                st.session_state["assistant_error"] = "Enter a question before sending."
+            else:
+                messages = st.session_state["assistant_messages"]
+                messages.append({"role": "user", "content": prompt.strip()})
+                response, error = api(
+                    "POST",
+                    "/api/assistant/chat",
+                    json={"messages": messages[-12:]},
+                )
+                if error:
+                    st.session_state["assistant_error"] = error
+                else:
+                    messages.append({"role": "assistant", "content": response["reply"]})
+                    st.session_state.pop("assistant_error", None)
+            st.rerun()
 
 
 def new_project():
@@ -103,7 +161,7 @@ with st.sidebar:
         st.write("**1. Add a project.** Upload a project archive or use a folder already on this computer.")
         st.write("**2. Review the setup.** See what Aidevops found and download the files it prepared.")
         st.write("**3. Choose your checks.** Review the details and give permission before anything runs.")
-    with st.expander("Service & settings"):
+    with st.expander("Service"):
         if health:
             st.caption("Project service: connected")
             st.caption("AI planning: configured" if health["llm_mode"] == "live" else "AI planning: off · example plans available")
@@ -111,7 +169,14 @@ with st.sidebar:
             st.caption(f"Version {health['version']} · {API_URL}")
         else:
             st.caption("Project service: disconnected")
+    render_ai_assistant()
     st.markdown('<p class="aid-footnote">You stay in control.<br>Publishing and cloud deployment are not available yet.</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<a class="aid-sidebar-logout" href="{escape(API_URL)}/logout" '
+        'target="_self" title="End your current login session">'
+        '<span aria-hidden="true">↪</span> Sign out</a>',
+        unsafe_allow_html=True,
+    )
 
 if health_error:
     st.markdown('<div class="aid-hero"><div class="aid-kicker">Welcome to Aidevops</div><h1>A clearer path for your project.</h1><p>Understand your app, prepare its setup, and run checks with guidance at each step.</p></div>', unsafe_allow_html=True)
