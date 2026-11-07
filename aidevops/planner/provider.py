@@ -53,16 +53,134 @@ class LLMProvider(Protocol):
         """Return a parsed JSON object, or raise :class:`ProviderError`."""
 
 
+class AnthropicProvider:
+    """Anthropic Claude API provider."""
+
+    name = "anthropic"
+
+    def __init__(self, settings: Settings) -> None:
+        if not settings.anthropic_api_key:
+            raise ProviderError("no Anthropic API key configured")
+        self._settings = settings
+        self._model = settings.anthropic_model
+        self._timeout = settings.llm_timeout_seconds
+        self._retries = max(0, settings.llm_max_retries)
+
+    def _client(self, settings: Settings | None = None):
+        try:
+            from anthropic import Anthropic
+        except Exception as exc:  # pragma: no cover - depends on install
+            raise ProviderError(f"anthropic SDK unavailable: {exc}") from exc
+        active = settings or self._settings
+        kwargs: dict[str, Any] = {
+            "api_key": active.anthropic_api_key,
+            "timeout": self._timeout,
+            "max_retries": 0,
+        }
+        if active.anthropic_base_url:
+            kwargs["base_url"] = active.anthropic_base_url
+        return Anthropic(**kwargs)
+
+    def _chat(self, client, system: str, messages: list[dict[str, str]]) -> str:
+        response = client.messages.create(
+            model=self._model,
+            system=system,
+            messages=[{"role": message["role"], "content": message["content"]} for message in messages],
+            temperature=0.3,
+            max_tokens=700,
+        )
+        blocks = getattr(response, "content", []) or []
+        parts: list[str] = []
+        for block in blocks:
+            if isinstance(block, dict):
+                item = block.get("text")
+                if isinstance(item, str):
+                    parts.append(item)
+            else:
+                item = getattr(block, "text", None)
+                if isinstance(item, str):
+                    parts.append(item)
+        content = "\n".join(parts).strip()
+        if not content:
+            raise ProviderError("anthropic provider returned an empty response")
+        return content
+
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        if self._settings.local_only:
+            raise ProviderError("External AI is disabled by local-only mode")
+        validate_destination(
+            self._settings.anthropic_base_url or "https://api.anthropic.com",
+            self._settings.ai_allowed_hosts,
+        )
+        safe_system = redact(system, [self._settings.anthropic_api_key])
+        safe_user = redact(user, [self._settings.anthropic_api_key])
+        client = self._client()
+        last_exc: Exception | None = None
+        attempts = 0
+        while attempts <= self._retries:
+            attempts += 1
+            try:
+                return _extract_json(self._chat(client, safe_system, [{"role": "user", "content": safe_user}]))
+            except json.JSONDecodeError as exc:
+                last_exc = exc
+                log.warning("anthropic provider returned unparseable JSON", extra={"event": "llm_parse"})
+            except Exception as exc:  # noqa: BLE001 - provider errors are opaque
+                last_exc = exc
+                log.warning(
+                    "anthropic provider request failed",
+                    extra={"event": "llm_request", "tool": type(exc).__name__},
+                )
+        raise ProviderError(
+            f"anthropic provider request failed after {attempts} attempt(s)",
+            detail=type(last_exc).__name__ if last_exc else None,
+        )
+
+    def complete_chat(self, system: str, messages: list[dict[str, str]]) -> str:
+        if self._settings.local_only:
+            raise ProviderError("External AI is disabled by local-only mode")
+        validate_destination(
+            self._settings.anthropic_base_url or "https://api.anthropic.com",
+            self._settings.ai_allowed_hosts,
+        )
+        safe_system = redact(system, [self._settings.anthropic_api_key])
+        safe_messages = [
+            {
+                "role": message["role"],
+                "content": redact(message["content"], [self._settings.anthropic_api_key]),
+            }
+            for message in messages
+        ]
+        client = self._client()
+        try:
+            content = self._chat(client, safe_system, safe_messages)
+        except Exception as exc:  # noqa: BLE001 - provider errors are opaque
+            log.warning(
+                "assistant anthropic provider request failed",
+                extra={"event": "assistant_request", "tool": type(exc).__name__},
+            )
+            exc_name = type(exc).__name__
+            if exc_name in {"APIConnectionError", "TimeoutError", "ConnectError", "ConnectionError"}:
+                raise ProviderError(
+                    "Connect to the internet and try again.",
+                    detail="APIConnectionError",
+                ) from exc
+            raise ProviderError(
+                "assistant provider request failed",
+                detail=exc_name,
+            ) from exc
+        return redact(content, [self._settings.anthropic_api_key])
+
+
 class OpenAIProvider:
     """OpenAI-compatible chat provider (also works against compatible gateways)."""
 
     name = "openai"
 
     def __init__(self, settings: Settings) -> None:
-        if not settings.openai_api_key:
+        if not settings.provider_api_key:
             raise ProviderError("no provider API key configured")
         self._settings = settings
-        self._model = settings.openai_model
+        self._model = settings.provider_model
         self._timeout = settings.llm_timeout_seconds
         self._retries = max(0, settings.llm_max_retries)
 
@@ -73,12 +191,12 @@ class OpenAIProvider:
             raise ProviderError(f"openai SDK unavailable: {exc}") from exc
         active = settings or self._settings
         kwargs: dict[str, Any] = {
-            "api_key": active.openai_api_key,
+            "api_key": active.provider_api_key,
             "timeout": self._timeout,
             "max_retries": 0,  # retries are bounded by complete_json, not multiplied by the SDK
         }
-        if active.openai_base_url:
-            kwargs["base_url"] = active.openai_base_url
+        if active.provider_base_url:
+            kwargs["base_url"] = active.provider_base_url
         return OpenAI(**kwargs)
 
     def _chat(self, client, system: str, user: str, *, json_mode: bool) -> str:
@@ -103,9 +221,9 @@ class OpenAIProvider:
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         if self._settings.local_only:
             raise ProviderError("External AI is disabled by local-only mode")
-        validate_destination(self._settings.openai_base_url, self._settings.ai_allowed_hosts)
-        system = redact(system, [self._settings.openai_api_key])
-        user = redact(user, [self._settings.openai_api_key])
+        validate_destination(self._settings.provider_base_url, self._settings.ai_allowed_hosts)
+        system = redact(system, [self._settings.provider_api_key])
+        user = redact(user, [self._settings.provider_api_key])
         client = self._client()
         last_exc: Exception | None = None
         json_mode = True
@@ -141,12 +259,12 @@ class OpenAIProvider:
     def complete_chat(self, system: str, messages: list[dict[str, str]]) -> str:
         if self._settings.local_only:
             raise ProviderError("External AI is disabled by local-only mode")
-        validate_destination(self._settings.openai_base_url, self._settings.ai_allowed_hosts)
-        safe_system = redact(system, [self._settings.openai_api_key])
+        validate_destination(self._settings.provider_base_url, self._settings.ai_allowed_hosts)
+        safe_system = redact(system, [self._settings.provider_api_key])
         safe_messages = [
             {
                 "role": message["role"],
-                "content": redact(message["content"], [self._settings.openai_api_key]),
+                "content": redact(message["content"], [self._settings.provider_api_key]),
             }
             for message in messages
         ]
@@ -166,19 +284,27 @@ class OpenAIProvider:
                 "assistant provider request failed",
                 extra={"event": "assistant_request", "tool": type(exc).__name__},
             )
+            exc_name = type(exc).__name__
+            if exc_name in {"APIConnectionError", "TimeoutError", "ConnectError", "ConnectionError"}:
+                raise ProviderError(
+                    "Connect to the internet and try again.",
+                    detail="APIConnectionError",
+                ) from exc
             raise ProviderError(
                 "assistant provider request failed",
-                detail=type(exc).__name__,
+                detail=exc_name,
             ) from exc
         content = response.choices[0].message.content
         if not isinstance(content, str) or not content.strip():
             raise ProviderError("assistant provider returned an empty response")
-        return redact(content, [self._settings.openai_api_key])
+        return redact(content, [self._settings.provider_api_key])
 
 
 def build_provider(settings: Settings) -> LLMProvider | None:
     """Return a provider when configured, else ``None`` (caller uses mock)."""
 
-    if settings.llm_configured:
-        return OpenAIProvider(settings)
-    return None
+    if not settings.llm_configured:
+        return None
+    if settings.active_llm_provider == "anthropic":
+        return AnthropicProvider(settings)
+    return OpenAIProvider(settings)

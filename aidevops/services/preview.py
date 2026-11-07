@@ -167,7 +167,11 @@ class PreviewService:
                 text = content.decode("utf-8", errors="replace")
                 from ..privacy import PATTERNS
                 if scan_secrets(text) or any(re.search(p, text, re.DOTALL if "PRIVATE KEY" in p else 0) for p, _ in PATTERNS[:5]):
-                    raise PolicyError("Possible secret found in source; remove it before building")
+                    safe_path = Path(rel).as_posix()
+                    raise PolicyError(
+                        f"Possible secret found in source file {safe_path}; "
+                        "remove or replace it before building"
+                    )
                 dest = folder / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(content)

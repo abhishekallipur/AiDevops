@@ -15,6 +15,13 @@ def test_login_page_is_served_by_backend(client):
     assert 'id="mode-toggle"' in response.text
 
 
+def test_backend_root_redirects_to_login(client):
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/login"
+
+
 def test_login_page_uses_saved_dashboard_theme(client, monkeypatch, tmp_path):
     theme_settings = tmp_path / "ui_theme.json"
     theme_settings.write_text('{"theme":"dark"}', encoding="utf-8")

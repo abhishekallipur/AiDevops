@@ -76,6 +76,66 @@ def test_assistant_chat_uses_configured_provider_without_exposing_key(
     ]
 
 
+def test_assistant_chat_accepts_long_previous_assistant_reply(client, monkeypatch):
+    from aidevops.planner.provider import OpenAIProvider
+
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        openai_api_key="test-openai-key",
+    )
+    long_reply = "Earlier assistant answer. " * 120
+    calls = []
+
+    def complete_chat(self, system, messages):
+        calls.append(messages)
+        return "Here is the follow-up answer."
+
+    monkeypatch.setattr(OpenAIProvider, "complete_chat", complete_chat)
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": long_reply},
+                {"role": "user", "content": "My follow-up question"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Here is the follow-up answer."}
+    assert calls[0][1]["content"] == long_reply
+
+
+def test_assistant_chat_uses_groq_configuration(client, monkeypatch):
+    from aidevops.planner.provider import OpenAIProvider
+
+    client.app.state.settings = replace(
+        client.app.state.settings,
+        llm_provider="groq",
+        groq_api_key="test-groq-key",
+        groq_base_url="https://api.groq.com/openai/v1",
+        groq_model="openai/gpt-oss-20b",
+    )
+    calls = []
+
+    def complete_chat(self, system, messages):
+        calls.append((self._model, messages))
+        return "Groq provider response."
+
+    monkeypatch.setattr(OpenAIProvider, "complete_chat", complete_chat)
+    response = client.post(
+        "/api/assistant/chat",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Groq provider response."}
+    assert calls == [
+        ("openai/gpt-oss-20b", [{"role": "user", "content": "Hello"}])
+    ]
+
+
 def test_assistant_chat_rejects_invalid_message_order(client):
     response = client.post(
         "/api/assistant/chat",

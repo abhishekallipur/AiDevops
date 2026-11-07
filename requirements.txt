@@ -14,6 +14,7 @@ streamlit>=1.40,<2
 
 # Optional: live LLM generation. Mock mode is used when unset.
 openai>=1.60
+anthropic>=0.40
 
 # Legacy AIDevOps Copilot notes retrieval
 scikit-learn>=1.5

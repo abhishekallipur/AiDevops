@@ -2,7 +2,7 @@
 
 A local workspace that helps you turn an existing app into a Docker image and open a preview in your browser. Add your project, review the suggested setup, approve the build, and launch it locally.
 
-Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and the dashboard's robot assistant use the configured OpenAI-compatible provider. Without a provider key, the assistant is unavailable and planning uses clearly labelled rule-based example plans.
+Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and the dashboard's robot assistant use the configured provider: OpenAI-compatible APIs (including Groq) or Anthropic Claude. Without a provider key, the assistant is unavailable and planning uses clearly labelled rule-based example plans.
 
 ## Quick navigation
 
@@ -75,9 +75,7 @@ You should see both **Client** and **Server** information. Without Docker, you c
 ### 2. Start the backend â€” terminal 1
 
 ```powershell
-cd E:\Aidevops
-.\.venv\Scripts\python.exe -m uvicorn aidevops.api.main:app --host 127.0.0.1 --port 8000
-```
+& ".\.venv\Scripts\python.exe" -m uvicorn aidevops.api.main:app --host 127.0.0.1 --port 8000
 
 Leave this terminal running.
 
@@ -86,23 +84,22 @@ Leave this terminal running.
 Open a second PowerShell window:
 
 ```powershell
-cd E:\Aidevops
-$env:AIDEVOPS_API_URL = "http://127.0.0.1:8000"
-.\.venv\Scripts\python.exe -m streamlit run aidevops/ui/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
+ & ".\.venv\Scripts\python.exe" -m streamlit run aidevops/ui/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
+2026-11-06 20:34:46.982 Uvicorn server started on 127.0.0.1:8501
 ```
 
-Leave this terminal running too. Open **[http://localhost:8501](http://localhost:8501)**.
+Leave this terminal running too. Open **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** to load the login page first. After signing in, you will be redirected to the workspace at `http://127.0.0.1:8501`.
 
 The backend also serves the login and signup page at **[http://127.0.0.1:8000/login](http://127.0.0.1:8000/login)**. On a new database, the local demo credentials are `admin` / `admin123`. Sign-up creates additional accounts in the SQLite database; each username must be unique and passwords must be at least eight characters. After registration, the form returns to login and asks the new user to sign in; it does not automatically create a session. Set `AIDEVOPS_ADMIN_USERNAME` and `AIDEVOPS_ADMIN_PASSWORD` before the first backend startup to use different administrator credentials; a restart updates the configured admin password. Passwords are stored as salted hashes, and successful logins create expiring server-side sessions in HttpOnly cookies, then redirect to the Streamlit workspace. Keep the frontend running on port 8501 or set `AIDEVOPS_DASHBOARD_URL` to its URL. Change the demo password before exposing the backend to any network; public sign-up is enabled and the other API routes are not yet protected by login.
 
-Use the **🤖 AI Assistant** popover in the dashboard sidebar to ask general questions, including DevOps and workspace questions. It uses the backend's configured OpenAI-compatible provider; chat messages are sent to that provider and are kept only in the current Streamlit session. The assistant does not execute commands or change project files. Configure `OPENAI_API_KEY` in `.env` and restart the backend to enable it. Without a configured provider, the assistant reports that it is unavailable instead of returning a canned answer.
+Use the **🤖 AI Assistant** popover in the dashboard sidebar to ask general questions, including DevOps and workspace questions. Chat messages are sent to the configured provider and are kept only in the current Streamlit session. The assistant does not execute commands or change project files. Configure `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GROQ_API_KEY` in `.env`, select the provider with `AIDEVOPS_LLM_PROVIDER` when needed, and restart the backend. Without a configured provider, the assistant reports that it is unavailable instead of returning a canned answer.
 
 | Address | What it opens |
 | --- | --- |
-| [localhost:8501](http://localhost:8501) | Aidevops workspace |
-| [localhost:8000/login](http://localhost:8000/login) | Backend admin login |
-| [localhost:8000/health](http://localhost:8000/health) | Backend connection/configuration status |
-| [localhost:8000/docs](http://localhost:8000/docs) | Interactive API reference |
+| [127.0.0.1:8000/](http://127.0.0.1:8000/) | Login page (redirects to login) |
+| [127.0.0.1:8501](http://127.0.0.1:8501) | Aidevops workspace after login |
+| [127.0.0.1:8000/health](http://127.0.0.1:8000/health) | Backend connection/configuration status |
+| [127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | Interactive API reference |
 
 Run **one backend process per data directory**. Do not add multiple Uvicorn workers: the preview service uses a single-process worker lock.
 
@@ -207,13 +204,17 @@ See [.env.example](.env.example) for the full list. Common settings:
 | `AIDEVOPS_EXEC_TIMEOUT_SECONDS` | `120`; normal tool timeout. |
 | `AIDEVOPS_BUILD_TIMEOUT_SECONDS` | `600`; separate image-build timeout, capped at 1800 seconds. |
 | `AIDEVOPS_LOCAL_ONLY` | `false`; set `true` to disable external AI requests. |
-| `AIDEVOPS_AI_ALLOWED_HOSTS` | `api.openai.com,openrouter.ai`; permitted HTTPS AI destinations. |
+| `AIDEVOPS_AI_ALLOWED_HOSTS` | Permitted HTTPS AI destinations; defaults include OpenAI, OpenRouter, Anthropic, and Groq. |
 | `OPENAI_API_KEY` | Empty by default; enables external AI planning and the dashboard assistant. |
+| `ANTHROPIC_API_KEY` | Optional Anthropic key; choose `AIDEVOPS_LLM_PROVIDER=anthropic` to use Claude. |
+| `GROQ_API_KEY` | Optional Groq key; choose `AIDEVOPS_LLM_PROVIDER=groq` to use Groq. |
 | `OPENAI_MODEL` | Provider model identifier; see the repository defaults in `.env.example`. |
 | `OPENAI_BASE_URL` | Optional compatible provider endpoint; must pass the destination policy. |
+| `GROQ_MODEL` | Groq model identifier; defaults to `openai/gpt-oss-20b`. |
+| `GROQ_BASE_URL` | Groq-compatible API endpoint; defaults to `https://api.groq.com/openai/v1`. |
 | `AIDEVOPS_API_URL` | Frontend backend address; explicitly set it in terminal 2 as shown above. |
 
-To enable external planning, edit the provider fields in `.env`, set `AIDEVOPS_LOCAL_ONLY=false`, and restart the backend. Provider/model compatibility varies. `/health` reporting `llm_mode: "live"` means configured, not proof that a provider request succeeded. Check each plan's label; failures may fall back to an example plan.
+To enable external planning, edit the provider fields in `.env`, set `AIDEVOPS_LOCAL_ONLY=false`, and restart the backend. `AIDEVOPS_LLM_PROVIDER` accepts `openai`, `anthropic`, or `groq`; when omitted, it selects a provider based on available keys. Provider/model compatibility varies. `/health` reporting `llm_mode: "live"` means configured, not proof that a provider request succeeded. Check each plan's label; failures may fall back to an example plan.
 
 For no external AI requests, put this in `.env` and restart the backend:
 

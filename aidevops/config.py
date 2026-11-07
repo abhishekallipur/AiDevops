@@ -75,10 +75,22 @@ class Settings:
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_model: str = "gpt-4.1-mini"
+    anthropic_api_key: str | None = None
+    anthropic_base_url: str | None = None
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    groq_api_key: str | None = None
+    groq_base_url: str | None = None
+    groq_model: str = "openai/gpt-oss-20b"
+    llm_provider: str = "openai"
     llm_timeout_seconds: float = 30.0
     llm_max_retries: int = 1
     local_only: bool = False
-    ai_allowed_hosts: tuple[str, ...] = ("api.openai.com", "openrouter.ai")
+    ai_allowed_hosts: tuple[str, ...] = (
+        "api.openai.com",
+        "openrouter.ai",
+        "api.anthropic.com",
+        "api.groq.com",
+    )
 
     analyzer_max_files: int = 2000
     analyzer_max_file_bytes: int = 200_000
@@ -100,8 +112,45 @@ class Settings:
 
     # ------------------------------------------------------------------ helpers
     @property
+    def active_llm_provider(self) -> str:
+        provider = (self.llm_provider or "openai").strip().lower()
+        if provider in {"anthropic", "claude"}:
+            return "anthropic"
+        if provider == "groq":
+            return "groq"
+        if not self.openai_api_key and self.anthropic_api_key:
+            return "anthropic"
+        if not self.openai_api_key and self.groq_api_key:
+            return "groq"
+        return "openai"
+
+    @property
+    def provider_api_key(self) -> str | None:
+        if self.active_llm_provider == "anthropic":
+            return self.anthropic_api_key or self.openai_api_key
+        if self.active_llm_provider == "groq":
+            return self.groq_api_key
+        return self.openai_api_key or self.anthropic_api_key
+
+    @property
+    def provider_base_url(self) -> str | None:
+        if self.active_llm_provider == "anthropic":
+            return self.anthropic_base_url or "https://api.anthropic.com"
+        if self.active_llm_provider == "groq":
+            return self.groq_base_url or "https://api.groq.com/openai/v1"
+        return self.openai_base_url
+
+    @property
+    def provider_model(self) -> str:
+        if self.active_llm_provider == "anthropic":
+            return self.anthropic_model
+        if self.active_llm_provider == "groq":
+            return self.groq_model
+        return self.openai_model
+
+    @property
     def llm_configured(self) -> bool:
-        return bool(self.openai_api_key) and not self.local_only
+        return bool(self.provider_api_key) and not self.local_only
 
     @property
     def llm_mode(self) -> str:
@@ -144,10 +193,21 @@ def load_settings(*, load_dotenv_file: bool = True) -> Settings:
         openai_api_key=_env_str("OPENAI_API_KEY"),
         openai_base_url=_env_str("OPENAI_BASE_URL"),
         openai_model=_env_str("OPENAI_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
+        anthropic_api_key=_env_str("ANTHROPIC_API_KEY"),
+        anthropic_base_url=_env_str("ANTHROPIC_BASE_URL"),
+        anthropic_model=_env_str("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+        or "claude-3-5-sonnet-20241022",
+        groq_api_key=_env_str("GROQ_API_KEY"),
+        groq_base_url=_env_str("GROQ_BASE_URL"),
+        groq_model=_env_str("GROQ_MODEL", "openai/gpt-oss-20b") or "openai/gpt-oss-20b",
+        llm_provider=(_env_str("AIDEVOPS_LLM_PROVIDER") or _env_str("LLM_PROVIDER") or "openai")
+        .strip()
+        .lower()
+        or "openai",
         llm_timeout_seconds=_env_float("AIDEVOPS_LLM_TIMEOUT_SECONDS", 30.0),
         llm_max_retries=_env_int("AIDEVOPS_LLM_MAX_RETRIES", 1),
         local_only=_env_bool("AIDEVOPS_LOCAL_ONLY", False),
-        ai_allowed_hosts=tuple(x.strip().lower() for x in (_env_str("AIDEVOPS_AI_ALLOWED_HOSTS", "api.openai.com,openrouter.ai") or "").split(",") if x.strip()),
+        ai_allowed_hosts=tuple(x.strip().lower() for x in (_env_str("AIDEVOPS_AI_ALLOWED_HOSTS", "api.openai.com,openrouter.ai,api.anthropic.com,api.groq.com") or "").split(",") if x.strip()),
         analyzer_max_files=_env_int("AIDEVOPS_ANALYZER_MAX_FILES", 2000),
         analyzer_max_file_bytes=_env_int("AIDEVOPS_ANALYZER_MAX_FILE_BYTES", 200_000),
         analyzer_max_depth=_env_int("AIDEVOPS_ANALYZER_MAX_DEPTH", 8),

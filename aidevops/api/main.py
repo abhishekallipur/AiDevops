@@ -36,7 +36,7 @@ from ..services.preview import PreviewService
 from ..planner.planner import prompt_preview
 from ..errors import ValidationError
 from ..privacy import redact
-from ..planner.provider import OpenAIProvider
+from ..planner.provider import AnthropicProvider, OpenAIProvider
 
 log = get_logger("aidevops.api")
 SESSION_COOKIE = "aidevops_session"
@@ -119,11 +119,11 @@ class LoginRequest(BaseModel):
 
 class AssistantMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(min_length=1)
 
 
 class AssistantChatRequest(BaseModel):
-    messages: list[AssistantMessage] = Field(min_length=1, max_length=12)
+    messages: list[AssistantMessage] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_conversation(self) -> AssistantChatRequest:
@@ -344,16 +344,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     @app.get("/", include_in_schema=False)
-    def root() -> dict:
-        return {
-            "service": "Autonomous AI DevOps Engineer",
-            "version": __version__,
-            "docs": "/docs",
-            "health": "/health",
-            "jobs": "/api/jobs",
-            "login": "/login",
-            "ui": "streamlit run aidevops/ui/streamlit_app.py",
-        }
+    def root() -> RedirectResponse:
+        return RedirectResponse(url="/login")
 
     @app.get("/health", response_model=HealthResponse)
     def health(cfg: Settings = Depends(get_settings)) -> HealthResponse:
@@ -380,8 +372,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "The AI assistant is not configured. Set OPENAI_API_KEY in the "
-                    "backend environment or .env file, then restart the backend."
+                    "The AI assistant is not configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, "
+                    "or GROQ_API_KEY in the backend environment or .env file, then restart the backend."
                 ),
             )
 
@@ -401,7 +393,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"role": message.role, "content": message.content}
             for message in body.messages
         ]
-        reply = OpenAIProvider(cfg).complete_chat(system, messages)
+        if cfg.active_llm_provider == "anthropic":
+            reply = AnthropicProvider(cfg).complete_chat(system, messages)
+        else:
+            reply = OpenAIProvider(cfg).complete_chat(system, messages)
         return {"reply": reply}
 
     @app.get("/api/tools", response_model=list[ToolCatalogItem])

@@ -87,6 +87,7 @@ def test_secret_in_source_blocks_snapshot(preview_client, python_repo):
     preview_client.post(f"/api/jobs/{job['id']}/run")
     result = preview_client.post(f"/api/jobs/{job['id']}/previews")
     assert result.status_code == 403
+    assert "settings.py" in result.json()["message"]
     assert "fake-sensitive" not in result.text
 
 

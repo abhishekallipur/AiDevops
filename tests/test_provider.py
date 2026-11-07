@@ -16,6 +16,23 @@ def test_build_provider_returns_adapter_with_key(settings: Settings):
     assert isinstance(build_provider(replace(settings, openai_api_key="k")), OpenAIProvider)
 
 
+def test_build_provider_uses_groq_openai_compatible_settings(settings: Settings):
+    provider = build_provider(
+        replace(
+            settings,
+            llm_provider="groq",
+            groq_api_key="groq-key",
+            groq_base_url="https://api.groq.com/openai/v1",
+            groq_model="openai/gpt-oss-20b",
+        )
+    )
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._model == "openai/gpt-oss-20b"
+    assert provider._settings.provider_api_key == "groq-key"
+    assert provider._settings.provider_base_url == "https://api.groq.com/openai/v1"
+
+
 def test_extract_json_plain():
     assert _extract_json('{"a": 1}') == {"a": 1}
 
