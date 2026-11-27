@@ -31,6 +31,7 @@ from ..db import JobStore
 from ..errors import NotFoundError, PolicyError, ValidationError
 from ..logging_config import get_logger
 from ..models import JobRecord
+from ..privacy import redact
 from .preview import PreviewService
 
 log = get_logger("aidevops.aws")
@@ -95,7 +96,7 @@ class AwsManagementService:
             )
             conn.commit()
 
-    def _client(self, service: str) -> Any:
+    def _client(self, service: str, *, region_name: str | None = None) -> Any:
         if not re.fullmatch(r"[a-z0-9-]{3,32}", self.settings.aws_region):
             raise AwsManagementError("The configured AWS region is invalid.", status_code=503)
         try:
@@ -106,7 +107,7 @@ class AwsManagementService:
             ) from exc
 
         options = {
-            "region_name": self.settings.aws_region,
+            "region_name": region_name or self.settings.aws_region,
             "config": Config(
                 connect_timeout=3,
                 read_timeout=10,
@@ -143,6 +144,10 @@ class AwsManagementService:
             return boto3.client(service, **options)
         except (BotoCoreError, ValueError) as exc:
             raise AwsManagementError("The AWS client could not be configured.", status_code=503) from exc
+
+    def client_for(self, service: str, *, region_name: str | None = None) -> Any:
+        """Create an AWS SDK client using the same mode and credentials as deployments."""
+        return self._client(service, region_name=region_name)
 
     def _endpoint_display(self) -> str | None:
         if self.settings.aws_mode != "localstack":
@@ -271,6 +276,11 @@ class AwsManagementService:
                 requirements.append(
                     "An EC2 instance profile with ECR pull access is required."
                 )
+            else:
+                requirements.append(
+                    "The instance profile role must allow ECR image pulls; attach "
+                    "AmazonEC2ContainerRegistryReadOnly."
+                )
             if self.settings.aws_mode == "localstack":
                 requirements.append(
                     "LocalStack EC2 deployments require ECR support in the active license."
@@ -289,6 +299,136 @@ class AwsManagementService:
                 "in the AWS console; Aidevops does not currently stop or delete cloud resources."
             ),
         }
+
+    def _ec2_deployment_blockers(self) -> list[str]:
+        blockers = []
+        ami_id = self.settings.aws_ec2_ami_id or ""
+        if not _AMI_ID.fullmatch(ami_id):
+            blockers.append(
+                "Set AIDEVOPS_AWS_EC2_AMI_ID to an available x86_64 AMI in the configured region."
+            )
+        else:
+            try:
+                images = self._client("ec2").describe_images(
+                    ImageIds=[ami_id]
+                ).get("Images", [])
+                if not images or images[0].get("State") != "available":
+                    blockers.append(
+                        "The configured EC2 AMI is not available in the selected region. "
+                        "Update AIDEVOPS_AWS_EC2_AMI_ID to a current Amazon Linux 2023 x86_64 AMI."
+                    )
+                elif images[0].get("Architecture") != "x86_64":
+                    blockers.append(
+                        "The configured AMI is not x86_64-compatible with the selected t3 instance."
+                    )
+            except (AwsManagementError, ClientError, BotoCoreError, OSError) as exc:
+                code = (
+                    str((exc.response.get("Error") or {}).get("Code") or "")
+                    if isinstance(exc, ClientError) else ""
+                )
+                if code in {"InvalidAMIID.NotFound", "InvalidAMIID.Malformed"}:
+                    blockers.append(
+                        "The configured EC2 AMI was not found in the selected region. "
+                        "Update AIDEVOPS_AWS_EC2_AMI_ID to a current Amazon Linux 2023 x86_64 AMI."
+                    )
+                elif code in {"UnauthorizedOperation", "AccessDenied", "AccessDeniedException"}:
+                    blockers.append(
+                        "The backend AWS profile needs ec2:DescribeImages to validate the configured AMI."
+                    )
+                else:
+                    blockers.append(
+                        "Aidevops could not validate the configured AMI. Check AWS connectivity "
+                        "and ec2:DescribeImages permission."
+                    )
+
+        profile_arn = self.settings.aws_ec2_instance_profile_arn or ""
+        if not _INSTANCE_PROFILE_ARN.fullmatch(profile_arn):
+            blockers.append(
+                "Set AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN to a valid EC2 instance profile."
+            )
+            return blockers
+
+        profile_name = profile_arn.rsplit("/", 1)[-1]
+        try:
+            iam = self._client("iam")
+            profile = iam.get_instance_profile(
+                InstanceProfileName=profile_name
+            ).get("InstanceProfile", {})
+            roles = profile.get("Roles", [])
+            if not roles:
+                blockers.append(
+                    "The configured EC2 instance profile has no IAM role attached."
+                )
+                return blockers
+
+            account_id = self._client("sts").get_caller_identity().get("Account")
+            if profile_arn.split(":")[4] != account_id:
+                blockers.append(
+                    "The EC2 instance profile must belong to the same AWS account as the deployment profile."
+                )
+                return blockers
+
+            role_arn = roles[0].get("Arn")
+            if not role_arn:
+                blockers.append("The configured EC2 instance profile role could not be identified.")
+                return blockers
+            partition = profile_arn.split(":")[1]
+            token_check = iam.simulate_principal_policy(
+                PolicySourceArn=role_arn,
+                ActionNames=["ecr:GetAuthorizationToken"],
+                ResourceArns=["*"],
+            )
+            repository_arn = (
+                f"arn:{partition}:ecr:{self.settings.aws_region}:{account_id}:repository/*"
+            )
+            pull_check = iam.simulate_principal_policy(
+                PolicySourceArn=role_arn,
+                ActionNames=[
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                ],
+                ResourceArns=[repository_arn],
+            )
+            decisions = {
+                item.get("EvalActionName"): item.get("EvalDecision")
+                for response in (token_check, pull_check)
+                for item in response.get("EvaluationResults", [])
+            }
+            required_actions = [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+            ]
+            if any(decisions.get(action) != "allowed" for action in required_actions):
+                blockers.append(
+                    "The EC2 instance profile role cannot pull this Docker image from ECR. "
+                    "Attach the AWS-managed AmazonEC2ContainerRegistryReadOnly policy to that role."
+                )
+        except ClientError as exc:
+            code = str((exc.response.get("Error") or {}).get("Code") or "")
+            if code == "NoSuchEntity":
+                blockers.append(
+                    "The configured EC2 instance profile or its IAM role was not found. "
+                    "Check AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN."
+                )
+            elif code in {"UnauthorizedOperation", "AccessDenied", "AccessDeniedException"}:
+                blockers.append(
+                    "Aidevops could not verify the EC2 role's ECR access. Allow the backend role "
+                    "iam:GetInstanceProfile and iam:SimulatePrincipalPolicy, then retry."
+                )
+            else:
+                blockers.append(
+                    "Aidevops could not verify the EC2 role's ECR access. Check AWS connectivity "
+                    "and the configured instance profile."
+                )
+        except (AwsManagementError, BotoCoreError, OSError):
+            blockers.append(
+                "Aidevops could not verify the EC2 role's ECR access. Check AWS connectivity "
+                "and the configured instance profile."
+            )
+        return blockers
 
     def status(self) -> dict[str, Any]:
         mode = self.settings.aws_mode
@@ -505,6 +645,12 @@ class AwsManagementService:
             raise ValidationError(
                 f"This project is recommended for {suggested}; review its packaging requirements before overriding the recommendation"
             )
+        if target == "ec2" and self.settings.aws_mode == "aws":
+            blockers = self._ec2_deployment_blockers()
+            if blockers:
+                raise ValidationError(
+                    "EC2 deployment prerequisites are not met: " + " ".join(blockers)
+                )
 
         record = self._deployment(
             {
@@ -845,6 +991,22 @@ class AwsManagementService:
             auth = ecr.get_authorization_token(registryIds=[registry_id])["authorizationData"][0]
             username, password = base64.b64decode(auth["authorizationToken"]).decode("utf-8").split(":", 1)
             self._push_image(preview, repository["repositoryUri"], username, password)
+            try:
+                pushed_images = ecr.describe_images(
+                    repositoryName=repo_name,
+                    imageIds=[{"imageTag": "latest"}],
+                ).get("imageDetails", [])
+            except ClientError as exc:
+                error = exc.response.get("Error") or {}
+                if error.get("Code") == "ImageNotFoundException":
+                    raise AwsManagementError(
+                        "ECR did not confirm the pushed image. Check backend ECR push permissions and retry."
+                    ) from exc
+                raise
+            if not pushed_images:
+                raise AwsManagementError(
+                    "ECR did not confirm the pushed image. Check backend ECR push permissions and retry."
+                )
 
             group_name = "aidevops-" + record["id"][-8:]
             group = ec2.create_security_group(
@@ -872,7 +1034,7 @@ class AwsManagementService:
             )
             script = (
                 "#!/bin/bash\nset -euo pipefail\n"
-                "dnf install -y docker awscli\n"
+                "dnf install -y docker\n"
                 "systemctl enable --now docker\n"
                 f"aws ecr get-login-password --region {self.settings.aws_region} | "
                 f"docker login --username AWS --password-stdin {registry}\n"
@@ -989,11 +1151,30 @@ class AwsManagementService:
                 decode=True,
             )
             for event in events:
+                if isinstance(event, str):
+                    if re.search(r"\b(error|denied|unauthorized|failed)\b", event, re.IGNORECASE):
+                        detail = redact(event, [password])[:300]
+                        raise AwsManagementError(
+                            "Docker reported an ECR push failure: "
+                            + (detail or "the registry rejected the image")
+                        )
+                    continue
+                if not isinstance(event, dict):
+                    raise AwsManagementError(
+                        "Docker returned an invalid status while pushing the image to ECR."
+                    )
                 if event.get("error") or event.get("errorDetail"):
                     raise AwsManagementError("Docker could not publish the image to the configured ECR repository.")
         except (PolicyError, AwsManagementError):
             raise
         except Exception as exc:
+            detail = redact(str(exc), [password])[:500]
+            log.warning(
+                "Docker image publish failed (%s): %s",
+                type(exc).__name__,
+                detail or "No additional error detail was provided.",
+                extra={"event": "aws_ecr_image_push_failed"},
+            )
             raise AwsManagementError(
                 "Could not publish the verified Docker image to ECR. Check Docker Engine and registry access."
             ) from exc

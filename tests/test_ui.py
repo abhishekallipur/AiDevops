@@ -163,6 +163,14 @@ def test_aws_sidebar_section_requires_login(app):
     assert any("same hostname" in item.value for item in app.info)
 
 
+def test_aws_management_section_renders_without_admin_access(app):
+    app.radio[0].set_value("AWS management").run()
+
+    assert not app.exception
+    assert any("AWS management" in title.value for title in app.title)
+    assert any("administrator" in item.value for item in app.info)
+
+
 def test_aws_setup_page_guides_real_credentials_without_collecting_keys(app):
     app.radio[0].set_value("AWS setup").run()
 

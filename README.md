@@ -2,16 +2,16 @@
 
 A local workspace that helps you turn an existing app into a Docker image and open a preview in your browser, with optional approval-gated AWS deployment. Add your project, review the suggested setup, approve the build, and launch it locally.
 
-Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and general assistant replies use the configured provider: OpenAI-compatible APIs (including Groq) or Anthropic Claude. Administrator-only Docker and AWS status questions use current backend readings directly. Without a provider key, general chat is unavailable and planning uses clearly labelled rule-based example plans.
+Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and general assistant replies use the configured provider: OpenAI-compatible APIs (including Groq) or Anthropic Claude. Administrator-only Docker and AWS status questions use current backend readings directly; allowlisted AWS management commands run through the FastAPI backend. Without a provider key, general chat is unavailable and planning uses clearly labelled rule-based example plans.
 
 ## Quick navigation
 
 - [Requirements](#requirements)
-- [First-time setup](#first-time-setup-windows-powershell)
-- [Run the project](#run-the-project)
+- [Quick start](#quick-start-windows-powershell)
 - [Use the workspace](#use-the-workspace)
 - [Docker monitoring and management](#docker-monitoring-and-management)
 - [AWS deployment and monitoring](#aws-deployment-and-monitoring)
+- [AWS management dashboard](#aws-management-dashboard)
 - [Supported projects](#supported-projects)
 - [Configuration and AI privacy](#configuration-and-ai-privacy)
 - [Troubleshooting](#troubleshooting)
@@ -23,79 +23,94 @@ Aidevops includes a FastAPI backend and a Streamlit frontend. AI planning and ge
 | Requirement | Purpose |
 | --- | --- |
 | Python 3.11 or newer | Runs the backend and UI. Python 3.14.2 was tested locally. |
-| Docker Desktop with Linux containers | Required to build images, start previews, and run container tests. Start it before the backend. |
+| Git | Downloads the project on the first run. |
+| Docker Desktop with Linux containers (optional) | Required only to build images, start previews, and run container tests. |
 | LocalStack (optional) | Emulates AWS APIs for local monitoring and deployment tests; defaults to `http://localhost:4566`. |
-| Internet access | Usually needed to install Python packages and download Docker images/app dependencies. |
+| Internet access | Needed on first run to download the project and Python packages. |
 | Your app's source code | Upload a ZIP/TAR archive or use a folder on the backend computer. |
 | AI provider key (optional) | Enables external AI planning. The project works without one. |
 
-The commands below are for **Windows PowerShell** and assume this checkout is at **`E:\Aidevops`**. Change that path if you saved it elsewhere. Other operating systems have not been verified in this environment.
+## Quick start (Windows PowerShell)
 
-## First-time setup (Windows PowerShell)
-
-Run these commands once from PowerShell:
+Open PowerShell in the project folder (or its parent folder), paste this whole block, and press Enter. It downloads the project if needed, creates the Python environment, installs dependencies, starts both services, waits for them to respond, and opens the login page. It reuses services that are already listening on the default ports.
 
 ```powershell
-cd E:\Aidevops
-py --version
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$ErrorActionPreference = 'Stop'
+
+if (Test-Path '.\aidevops\api\main.py') {
+    $project = (Get-Location).Path
+} elseif (Test-Path '.\AiDevops\aidevops\api\main.py') {
+    $project = (Resolve-Path '.\AiDevops').Path
+} else {
+    git clone https://github.com/abhishekallipur/AiDevops.git
+    if ($LASTEXITCODE -ne 0) { throw 'Could not download Aidevops. Check that Git and internet access are available.' }
+    $project = (Resolve-Path '.\AiDevops').Path
+}
+
+Set-Location $project
+py -3 -c "import sys; assert sys.version_info >= (3, 11), 'Python 3.11 or newer is required'"
+if ($LASTEXITCODE -ne 0) { throw 'Install Python 3.11 or newer, then paste this block again.' }
+
+if (-not (Test-Path '.\.venv\Scripts\python.exe')) {
+    py -3 -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the Python environment.' }
+}
+
+$python = (Resolve-Path '.\.venv\Scripts\python.exe').Path
+& $python -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed. Check internet access and paste this block again.' }
+
+$env:AIDEVOPS_API_URL = 'http://127.0.0.1:8000'
+$env:AIDEVOPS_DASHBOARD_URL = 'http://127.0.0.1:8501'
+
+if (-not (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)) {
+    Start-Process -FilePath $python -ArgumentList @('-m', 'uvicorn', 'aidevops.api.main:app', '--host', '127.0.0.1', '--port', '8000') -WorkingDirectory $project
+}
+
+$apiReady = $false
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    try {
+        $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 2
+        if ($health.status -eq 'ok') { $apiReady = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 1
+}
+if (-not $apiReady) { throw 'The backend did not start. Check the FastAPI window and make sure port 8000 is free.' }
+
+if (-not (Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue)) {
+    Start-Process -FilePath $python -ArgumentList @('-m', 'streamlit', 'run', 'aidevops/ui/streamlit_app.py', '--server.address', '127.0.0.1', '--server.port', '8501') -WorkingDirectory $project
+}
+
+$uiReady = $false
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    try {
+        $page = Invoke-WebRequest -Uri 'http://127.0.0.1:8501/' -UseBasicParsing -TimeoutSec 2
+        if ($page.StatusCode -eq 200) { $uiReady = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 1
+}
+if (-not $uiReady) { throw 'The dashboard did not start. Check the Streamlit window and make sure port 8501 is free.' }
+
+Start-Process 'http://127.0.0.1:8000/'
+Write-Host 'Aidevops is ready. Sign in at http://127.0.0.1:8000/'
 ```
 
-`py --version` must report Python 3.11 or newer. If `py` is unavailable but `python` points to a supported version, use `python -m venv .venv` instead.
+On a fresh data directory, sign in with **admin** / **admin123**. Change the demo password before exposing the app to any network. The dashboard starts without an AI key, AWS credentials, or LocalStack. Those integrations show as unavailable until configured. Docker Desktop is only needed for building images, previews, and container tests; you can start and explore the dashboard without it.
 
-**Already installed?** Skip virtual-environment creation. After pulling dependency changes, run only the `pip install -r requirements.txt` command above.
+### Optional configuration
 
-These instructions call the virtual environment's Python directly. You do not need to activate it or change PowerShell's execution policy.
-
-### Optional configuration file
-
-Defaults are enough to try the app. To customize them, copy the example only if `.env` does not already exist:
+You do not need a `.env` file to start Aidevops. To customize settings, create one without overwriting an existing file:
 
 ```powershell
-cd E:\Aidevops
-if (-not (Test-Path .env)) {
-    Copy-Item .env.example .env
-}
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
 ```
 
 Keep `.env` private and do not commit it. Restart the backend after changing its configuration. Existing shell environment variables take precedence over `.env`.
 
-## Run the project
+The backend also serves the login and signup page at **[http://127.0.0.1:8000/login](http://127.0.0.1:8000/login)**. Sign-up creates additional accounts in the SQLite database; each username must be unique and passwords must be at least eight characters. After registration, the form returns to login and asks the new user to sign in; it does not automatically create a session. Set `AIDEVOPS_ADMIN_USERNAME` and `AIDEVOPS_ADMIN_PASSWORD` before the first backend startup to use different administrator credentials; a restart updates the configured admin password. Passwords are stored as salted hashes, and successful logins create expiring server-side sessions in HttpOnly cookies, then redirect to the Streamlit workspace. Keep the frontend running on port 8501 or set `AIDEVOPS_DASHBOARD_URL` to its URL. Docker and AWS management are restricted to the configured administrator; existing project APIs and public sign-up retain their existing access model. Use the same host name (for example, `127.0.0.1`) for the login page and Streamlit dashboard so the browser session cookie reaches the dashboard.
 
-### 1. Start Docker Desktop
-
-Wait until its engine is ready. Check it in PowerShell:
-
-```powershell
-docker version
-```
-
-You should see both **Client** and **Server** information. Without Docker, you can still review projects and download setup files, but builds, previews, and container tests cannot run.
-
-### 2. Start the backend â€” terminal 1
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m uvicorn aidevops.api.main:app --host 127.0.0.1 --port 8000
-
-Leave this terminal running.
-
-### 3. Start the frontend â€” terminal 2
-
-Open a second PowerShell window:
-
-```powershell
- & ".\.venv\Scripts\python.exe" -m streamlit run aidevops/ui/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
-2026-11-06 20:34:46.982 Uvicorn server started on 127.0.0.1:8501
-```
-
-Leave this terminal running too. Open **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** to load the login page first. After signing in, you will be redirected to the workspace at `http://127.0.0.1:8501`.
-
-The backend also serves the login and signup page at **[http://127.0.0.1:8000/login](http://127.0.0.1:8000/login)**. On a new database, the local demo credentials are `admin` / `admin123`. Sign-up creates additional accounts in the SQLite database; each username must be unique and passwords must be at least eight characters. After registration, the form returns to login and asks the new user to sign in; it does not automatically create a session. Set `AIDEVOPS_ADMIN_USERNAME` and `AIDEVOPS_ADMIN_PASSWORD` before the first backend startup to use different administrator credentials; a restart updates the configured admin password. Passwords are stored as salted hashes, and successful logins create expiring server-side sessions in HttpOnly cookies, then redirect to the Streamlit workspace. Keep the frontend running on port 8501 or set `AIDEVOPS_DASHBOARD_URL` to its URL. Change the demo password before exposing the backend to any network. Docker and AWS management are restricted to the configured administrator; existing project APIs and public sign-up retain their existing access model. Use the same host name (for example, `127.0.0.1`) for the login page and Streamlit dashboard so the browser session cookie reaches the dashboard.
-
-Open **AI assistant** from the dashboard sidebar for a full-page chat. General questions use the configured AI provider and stay in the current Streamlit session. Questions about live Docker containers and EC2 readings are answered from the local Docker Engine or AWS/LocalStack services and require the configured administrator; these readings are not sent to the AI provider. For example, ask “Show EC2 CPU and RAM” or “List running containers.” The assistant does not execute commands or change project files. Configure `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GROQ_API_KEY` in `.env`, select the provider with `AIDEVOPS_LLM_PROVIDER` when needed, and restart the backend. Without a configured provider, general chat reports that it is unavailable rather than returning a canned answer. EC2 memory readings require the CloudWatch Agent to publish `CWAgent/mem_used_percent`.
+Open **AI assistant** from the dashboard sidebar for a full-page chat. General questions use the configured AI provider and stay in the current Streamlit session. Questions about live Docker containers and EC2 readings are answered from the local Docker Engine or AWS/LocalStack services and require the configured administrator; these readings are not sent to the AI provider. For example, ask “Show EC2 CPU and RAM” or “List running containers.” Exact AWS management commands are handled deterministically by FastAPI using validated, allowlisted operations; they are not sent to the AI provider and cannot run arbitrary shell commands. Configure `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GROQ_API_KEY` in `.env`, select the provider with `AIDEVOPS_LLM_PROVIDER` when needed, and restart the backend. Without a configured provider, general chat reports that it is unavailable rather than returning a canned answer. EC2 memory readings require the CloudWatch Agent to publish `CWAgent/mem_used_percent`.
 
 | Address | What it opens |
 | --- | --- |
@@ -109,8 +124,8 @@ Run **one backend process per data directory**. Do not add multiple Uvicorn work
 ### Stop or restart
 
 1. In the UI, stop any active preview you no longer need. Use **Remove preview resources** if you also want its image and snapshot removed.
-2. Press **Ctrl+C** in each terminal to stop the frontend and backend.
-3. To restart, run the two startup commands again.
+2. Press **Ctrl+C** in each service window to stop the frontend and backend.
+3. To restart, paste the Quick start block again from the project folder; already-running services are reused.
 
 Stopping the frontend does not stop a preview container. Automatic preview expiry requires the backend to remain running; it reconciles expired sessions after restart. If the backend is offline, expiry is not enforced at that time.
 
@@ -201,7 +216,8 @@ Use **AWS setup** in the sidebar for a guided real-AWS setup. It recommends an A
 After an approved Docker build has produced a verified image, expand **AWS deployment** in that preview. Aidevops recommends **S3** for static sites and **EC2** for server applications such as FastAPI, Flask, Node servers, or Next.js. The recommendation is based on the analyzed project type and the selected path is checked against the built image before publishing. Each deployment requires one confirmation for creating resources and a separate confirmation that the website/service will be publicly reachable.
 
 - **S3:** Copies at most 100 MiB of static files from the verified image into a newly created bucket, uploading up to eight files concurrently, configures website hosting, and allows public `GetObject` access. S3 website endpoints are HTTP. Use only content intended to be public.
-- **EC2:** Creates an ECR repository, pushes the verified image, creates a security group allowing public HTTP on port 80, and launches one `t3.micro` instance in the default VPC. Configure a region-compatible AMI and an instance profile with ECR pull access. LocalStack must also include ECR in its active license; otherwise EC2 deployments will be rejected before resources are created. The app may take a few minutes to start after the instance launches.
+- **EC2:** Creates an ECR repository, pushes the verified image, creates a security group allowing public HTTP on port 80, and launches one `t3.micro` instance in the default VPC. Configure a region-compatible AMI and an instance profile with ECR pull access. Before creating resources, Aidevops verifies that the AMI is available and x86_64-compatible and that the instance role can pull from ECR. LocalStack must also include ECR in its active license; otherwise EC2 deployments will be rejected before resources are created. The app may take a few minutes to start after the instance launches.
+- **Choosing a target:** S3 hosts extracted static website files; it cannot run a Docker container or server process. Use EC2 for containerized backend/server applications.
 - **Cost and cleanup:** AWS resources can incur charges. Aidevops does not currently stop or delete successful cloud deployments; manage them in the AWS console. Failed operations attempt to remove resources they created, but permission or service failures can prevent cleanup. Check resources tagged by Aidevops before retrying.
 
 The backend defaults to **LocalStack only**, at `http://localhost:4566`, using dummy credentials. It never falls back to real AWS. This is an AWS API endpoint, not a browser console; opening its root may show `Not Found`. Check LocalStack health at `http://localhost:4566/_localstack/health`. Start LocalStack and set `AIDEVOPS_AWS_ENDPOINT_URL` if its endpoint differs. The LocalStack account ID (usually `000000000000`) is an emulator identity, not a real AWS account. When signing in, use the same hostname for the dashboard and login page (for example, `localhost` for both, not `localhost` for one and `127.0.0.1` for the other).
@@ -215,7 +231,32 @@ AIDEVOPS_AWS_EC2_AMI_ID=ami-0123456789abcdef0
 AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN=arn:aws:iam::123456789012:instance-profile/aidevops-ecr-pull
 ```
 
-Only the configured administrator can access `/api/aws`. The dashboard never receives AWS credentials. The backend uses typed AWS SDK calls rather than arbitrary shell commands. Endpoints include `GET /api/aws/status`, `GET /api/aws/overview`, `GET /api/aws/deployments`, `GET /api/aws/previews/{preview_id}/recommendation`, and the separately approved `POST /api/aws/previews/{preview_id}/deploy`.
+Attach the AWS-managed `AmazonEC2ContainerRegistryReadOnly` policy to the IAM role in that instance profile so EC2 can pull the image. This is separate from the backend AWS profile. The backend profile must also be allowed to call `ec2:DescribeImages`, `iam:GetInstanceProfile`, and `iam:SimulatePrincipalPolicy` for the deployment preflight, plus `ecr:DescribeImages` to verify the image push, in addition to the deployment permissions listed in the AWS setup page. A failed preflight explains the missing configuration and stops before creating AWS resources.
+
+Only the configured administrator can access `/api/aws` and `/api/aws/infra`. The dashboard never receives AWS credentials. The backend uses typed AWS SDK calls rather than arbitrary shell commands. Deployment endpoints include `GET /api/aws/status`, `GET /api/aws/overview`, `GET /api/aws/deployments`, `GET /api/aws/previews/{preview_id}/recommendation`, and the separately approved `POST /api/aws/previews/{preview_id}/deploy`. Infrastructure endpoints provide EC2 listing/details/actions, metrics, cost reports, audited SSM Docker actions, and audit history.
+
+## AWS management dashboard
+
+Select **AWS management** in the sidebar for EC2 instance details and lifecycle controls, on-demand CloudWatch CPU/memory/network/block-I/O metrics, Cost Explorer `UnblendedCost` data, and an administrator-only audit log. Cost Explorer data is delayed and can differ from the final bill, including credits and taxes. The page uses manual refresh; metrics, costs, and audit records load only when requested. Instance creation and termination require explicit confirmation. Configure the backend profile with scoped EC2 read/write permissions, `cloudwatch:GetMetricStatistics`, and `ce:GetCostAndUsage`.
+
+The dashboard can send a fixed set of remote Docker actions through Systems Manager: list containers, retrieve bounded logs, start, stop, restart, remove, and deploy a container from an ECR image. This requires an online SSM Agent and an EC2 instance profile with `AmazonSSMManagedInstanceCore`; ECR pulls additionally require `AmazonEC2ContainerRegistryReadOnly`. Container removal and deployment require explicit confirmation, and deployment also requires confirming the possible exposure through the instance security group. No arbitrary command, environment-variable inspection, or Docker socket is exposed. SSM output is redacted heuristically and should still be treated as potentially sensitive.
+
+The assistant supports these exact, administrator-only command forms for these operations:
+
+```text
+aws start i-0123456789abcdef0
+aws stop i-0123456789abcdef0
+aws reboot i-0123456789abcdef0
+aws terminate i-0123456789abcdef0
+aws docker list i-0123456789abcdef0
+aws docker logs i-0123456789abcdef0 aaaaaaaaaaaa
+aws docker restart i-0123456789abcdef0 aaaaaaaaaaaa
+aws docker deploy i-0123456789abcdef0 123456789012.dkr.ecr.us-east-1.amazonaws.com/web:latest web 8080 80
+aws metrics i-0123456789abcdef0
+aws costs 2026-11-10 2026-11-17 daily
+```
+
+For permanent or externally reachable actions, the assistant first returns the exact confirmation command to send next, such as `aws confirm terminate i-0123456789abcdef0`, `aws docker confirm remove i-0123456789abcdef0 aaaaaaaaaaaa`, or the same deploy command prefixed with `aws docker confirm`. SSM Docker deploy details and command output are managed in **AWS management**.
 
 ## Supported projects
 
@@ -251,7 +292,7 @@ See [.env.example](.env.example) for the full list. Common settings:
 | `AIDEVOPS_AWS_ENDPOINT_URL` | `http://localhost:4566`; LocalStack endpoint; ignored in explicit AWS mode. |
 | `AIDEVOPS_AWS_REGION` | `us-east-1`; AWS/LocalStack region. |
 | `AIDEVOPS_AWS_EC2_AMI_ID` | Required for EC2 deployment; use an Amazon Linux 2023 AMI available in the configured region. |
-| `AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN` | Required for EC2 deployment; the profile must grant ECR image pull access. |
+| `AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN` | EC2 deployment/management profile; its role needs ECR read for image pulls and SSM Core for remote management. |
 | `AIDEVOPS_LOCAL_ONLY` | `false`; set `true` to disable external AI requests. |
 | `AIDEVOPS_AI_ALLOWED_HOSTS` | Permitted HTTPS AI destinations; defaults include OpenAI, OpenRouter, Anthropic, and Groq. |
 | `OPENAI_API_KEY` | Empty by default; enables external AI planning and the dashboard assistant. |
@@ -261,7 +302,7 @@ See [.env.example](.env.example) for the full list. Common settings:
 | `OPENAI_BASE_URL` | Optional compatible provider endpoint; must pass the destination policy. |
 | `GROQ_MODEL` | Groq model identifier; defaults to `openai/gpt-oss-20b`. |
 | `GROQ_BASE_URL` | Groq-compatible API endpoint; defaults to `https://api.groq.com/openai/v1`. |
-| `AIDEVOPS_API_URL` | Frontend backend address; explicitly set it in terminal 2 as shown above. |
+| `AIDEVOPS_API_URL` | Frontend backend address; the Quick start command sets it to `http://127.0.0.1:8000`. |
 
 To enable external planning, edit the provider fields in `.env`, set `AIDEVOPS_LOCAL_ONLY=false`, and restart the backend. `AIDEVOPS_LLM_PROVIDER` accepts `openai`, `anthropic`, or `groq`; when omitted, it selects a provider based on available keys. Provider/model compatibility varies. `/health` reporting `llm_mode: "live"` means configured, not proof that a provider request succeeded. Check each plan's label; failures may fall back to an example plan.
 
@@ -281,7 +322,7 @@ This disables external AI only. Docker builds, package downloads, and running ap
 - Model-proposed commands are advisory. Registered tools and explicit approvals control execution.
 - Preview containers have resource limits and security restrictions. The Docker socket is not mounted into the app container. This is a local development tool, not a complete sandbox for hostile code.
 - Runtime environment values are not sent to AI or saved in review records. Docker can retain them in container metadata until removal. Runtime app logs are withheld in the UI because apps can print secrets; filtered build logs remain available.
-- The service has no multi-user authentication. Keep it on loopback; do not expose it publicly.
+- AWS and Docker management are restricted to the configured administrator. Keep the service on loopback unless you separately secure the network, account credentials, and deployment environment; it is not a public multi-tenant control plane.
 
 Read [SECURITY.md](docs/SECURITY.md) for the full boundaries and limitations.
 
@@ -292,6 +333,7 @@ With default settings:
 | Location | Contents |
 | --- | --- |
 | `data/aidevops.db` | Project reviews and their state. |
+| `data/aws_management.db` | AWS deployment records and infrastructure-operation audit logs. |
 | `data/generated/<JOB_ID>/` | Generated setup files. |
 | `data/previews.db` | Preview state and build records. |
 | `data/previews/` | Preview snapshots and worker lock. |
@@ -302,10 +344,10 @@ Treat these as local project data. Do not delete the data directory as a routine
 
 | Problem | What to do |
 | --- | --- |
-| `.venv\Scripts\python.exe` cannot be found | Run first-time setup from `E:\Aidevops`. Confirm `py --version` is supported. |
+| `.venv\Scripts\python.exe` cannot be found | Paste the Quick start block from the project folder or its parent. Confirm Python 3.11 or newer is installed. |
 | `ModuleNotFoundError` | Run `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` from the project directory. |
-| Backend is offline in the UI | Keep terminal 1 running. Open `/health`, check terminal errors, and verify terminal 2's `AIDEVOPS_API_URL`. |
-| Port 8000 or 8501 is already in use | Check whether Aidevops is already running. Stop the previous instance in its own terminal with Ctrl+C before restarting. |
+| Backend is offline in the UI | Check the FastAPI window and open `http://127.0.0.1:8000/health`. Confirm the dashboard uses `http://127.0.0.1:8000` as its backend. |
+| Port 8000 or 8501 is already in use | The Quick start block reuses services already listening on those ports. If they belong to another application, stop that app or close its server window before starting Aidevops. |
 | Docker is unavailable | Start Docker Desktop with Linux containers, wait for `docker version` to show Server information, then restart the backend and refresh. |
 | Another preview worker owns the data directory | Stop duplicate backend processes gracefully. Run one backend for that directory; deleting the lock file is not a substitute. |
 | Upload rejected | Check the backend size limit, archive format, and excluded/unsafe files. Try the local source folder instead. |
@@ -314,7 +356,7 @@ Treat these as local project data. Do not delete the data directory as a routine
 | Build times out | Increase `AIDEVOPS_BUILD_TIMEOUT_SECONDS` within its maximum, restart the backend, and retry the reviewed snapshot. |
 | Image builds but preview fails | Check the internal port, a valid HTTP path, `0.0.0.0` binding, and required runtime settings/services. |
 | AI plan is labelled as an example | Check provider configuration and local-only mode. The label is intentional; a configured key does not guarantee a successful model response. |
-| Old UI or Dockerfile remains | Restart both services and refresh. Create a new review to generate updated setup files. |
+| Old UI or Dockerfile remains | Close and restart both service windows, then refresh. Create a new review to generate updated setup files. |
 | Snapshot limit reached | Remove unused preview resources through the UI. The service currently permits 20 unremoved snapshots and two active operations. |
 
 ## API example (PowerShell)

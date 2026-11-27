@@ -63,18 +63,30 @@ def render(api, session_cookie=None) -> None:
 
     st.subheader("3. Ask your AWS administrator for scoped permissions")
     st.write(
-        "The backend profile needs `sts:GetCallerIdentity`; EC2 describe and launch/security-group "
-        "actions; ECR repository creation and image-push actions; and `iam:PassRole` limited to the "
-        "selected instance profile's role. S3 deployments additionally need bucket creation, object "
-        "upload, website/policy configuration, and cleanup actions. Monitoring needs EC2/S3 read "
-        "access and `cloudwatch:GetMetricStatistics`."
+        "The backend profile needs `sts:GetCallerIdentity`, `ec2:DescribeImages` and the EC2 "
+        "launch/security-group actions; ECR repository creation, image push and image verification "
+        "(`ecr:DescribeImages`); and "
+        "`iam:PassRole` limited to the selected instance profile's role. To validate deployment "
+        "before creating resources, it also needs `iam:GetInstanceProfile` and "
+        "`iam:SimulatePrincipalPolicy`. AWS management additionally needs EC2 describe/start/stop/"
+        "reboot/terminate/launch permissions, `ssm:DescribeInstanceInformation`, `ssm:SendCommand`, "
+        "`ssm:GetCommandInvocation`, `cloudwatch:GetMetricStatistics`, and "
+        "`ce:GetCostAndUsage`. Scope write permissions to the intended region and resources. "
+        "S3 deployments additionally need bucket creation, object upload, website/policy "
+        "configuration, and cleanup actions."
     )
     with st.expander("EC2 instance profile and deployment safety"):
         st.write(
             "The EC2 instance profile is separate from the backend credential profile. Its role must "
-            "allow the instance to pull its deployment image from ECR. Aidevops opens public HTTP on "
-            "port 80 for EC2, and S3 deployments make site files public. These actions can incur AWS "
-            "charges; deployment still requires explicit approval."
+            "allow the instance to use Systems Manager and, when pulling an ECR image, read from "
+            "ECR. Attach `AmazonSSMManagedInstanceCore` for SSM connectivity and "
+            "`AmazonEC2ContainerRegistryReadOnly` for ECR image pulls to that instance role (not "
+            "the backend profile). SSM actions require the agent to be online and outbound network "
+            "access. S3 hosts static website files only; it does not run Docker containers. The "
+            "AWS management page supports manual refresh and requests CloudWatch metrics only when "
+            "you ask; remote Docker commands use an allowlist and never accept arbitrary shell text. "
+            "Creating or terminating instances and deploying a container require explicit confirmation. "
+            "These actions can incur AWS charges."
         )
 
     st.subheader("Test the backend connection")

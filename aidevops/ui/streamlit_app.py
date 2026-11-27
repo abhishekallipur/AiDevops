@@ -13,6 +13,7 @@ import streamlit as st
 
 from aidevops.auth import SESSION_COOKIE
 from aidevops.ui.aws_dashboard import render as render_aws_dashboard
+from aidevops.ui.aws_management import render as render_aws_management
 from aidevops.ui.aws_setup import render as render_aws_setup
 from aidevops.ui.presentation import FILES, RESULTS, TOOLS, badge, status
 from aidevops.ui.docker_dashboard import render as render_docker_dashboard
@@ -63,11 +64,14 @@ def render_ai_assistant(api, session_cookie=None) -> None:
     st.title("Aidevops assistant")
     st.caption(
         "Ask about your project or get live Docker and AWS status. Live infrastructure "
-        "readings require the configured administrator and are returned directly from the services."
+        "readings and allowlisted management actions require the configured administrator and "
+        "are handled by the backend, not the AI provider."
     )
     st.info(
-        "Try “Show EC2 CPU and RAM” or “List running containers”. General questions use "
-        "the configured AI provider; live infrastructure readings do not."
+        "Try “Show EC2 CPU and RAM”, “List running containers”, or an exact command such as "
+        "`aws stop i-0123456789abcdef0`. Termination and container removal require a second "
+        "confirmation phrase. General questions use the configured AI provider; infrastructure "
+        "commands do not."
     )
 
     messages = st.session_state["assistant_messages"]
@@ -157,6 +161,7 @@ with st.sidebar:
             "Project workspace",
             "Docker monitoring",
             "AWS monitoring",
+            "AWS management",
             "AWS setup",
             "AI assistant",
         ],
@@ -207,6 +212,10 @@ if section == "Docker monitoring":
 
 if section == "AWS monitoring":
     render_aws_dashboard(api, st.context.cookies.get(SESSION_COOKIE))
+    st.stop()
+
+if section == "AWS management":
+    render_aws_management(api, st.context.cookies.get(SESSION_COOKIE))
     st.stop()
 
 if section == "AWS setup":

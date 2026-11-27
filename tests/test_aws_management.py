@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import boto3
+import docker
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError, TokenRetrievalError
 
@@ -153,6 +154,8 @@ def test_recommendation_selects_s3_for_static_and_ec2_for_server_apps(aws_servic
     )
     configured = aws_service.recommendation(PREVIEW_ID)
     assert configured["requirements"] == [
+        "The instance profile role must allow ECR image pulls; attach "
+        "AmazonEC2ContainerRegistryReadOnly.",
         "LocalStack EC2 deployments require ECR support in the active license."
     ]
 
@@ -435,6 +438,111 @@ def test_ec2_deployment_requires_ami_and_instance_profile(aws_service, monkeypat
     assert contacted is False
 
 
+def test_real_aws_ec2_preflight_blocks_invalid_ami_and_missing_ecr_pull_role(
+    settings, monkeypatch
+):
+    settings = replace(
+        settings,
+        aws_mode="aws",
+        aws_ec2_ami_id="ami-12345678",
+        aws_ec2_instance_profile_arn=(
+            "arn:aws:iam::123456789012:instance-profile/aidevops-ecr-pull"
+        ),
+    )
+    settings.ensure_dirs()
+    service = AwsManagementService(settings, FakePreviews(), FakeJobs(ProjectType.PYTHON))
+
+    class FakeEc2:
+        def describe_images(self, **_kwargs):
+            return {"Images": []}
+
+    class FakeIam:
+        def get_instance_profile(self, **_kwargs):
+            return {
+                "InstanceProfile": {
+                    "Roles": [{"Arn": "arn:aws:iam::123456789012:role/aidevops-ecr-pull"}]
+                }
+            }
+
+        def simulate_principal_policy(self, **kwargs):
+            return {
+                "EvaluationResults": [
+                    {"EvalActionName": action, "EvalDecision": "implicitDeny"}
+                    for action in kwargs["ActionNames"]
+                ]
+            }
+
+    clients = {
+        "ec2": FakeEc2(),
+        "iam": FakeIam(),
+        "sts": SimpleNamespace(
+            get_caller_identity=lambda: {"Account": "123456789012"}
+        ),
+    }
+    monkeypatch.setattr(service, "_client", lambda name: clients[name])
+
+    with pytest.raises(ValidationError) as error:
+        service.deploy(
+            "admin",
+            PREVIEW_ID,
+            "ec2",
+            approved=True,
+            public_access_confirmed=True,
+        )
+
+    assert "not available in the selected region" in str(error.value)
+    assert "AmazonEC2ContainerRegistryReadOnly" in str(error.value)
+    assert service.list_deployments() == []
+
+
+def test_real_aws_ec2_preflight_accepts_available_ami_and_ecr_pull_role(
+    settings, monkeypatch
+):
+    settings = replace(
+        settings,
+        aws_mode="aws",
+        aws_ec2_ami_id="ami-12345678",
+        aws_ec2_instance_profile_arn=(
+            "arn:aws:iam::123456789012:instance-profile/aidevops-ecr-pull"
+        ),
+    )
+    settings.ensure_dirs()
+    service = AwsManagementService(settings, FakePreviews(), FakeJobs(ProjectType.PYTHON))
+
+    class FakeEc2:
+        def describe_images(self, **_kwargs):
+            return {
+                "Images": [{"State": "available", "Architecture": "x86_64"}]
+            }
+
+    class FakeIam:
+        def get_instance_profile(self, **_kwargs):
+            return {
+                "InstanceProfile": {
+                    "Roles": [{"Arn": "arn:aws:iam::123456789012:role/aidevops-ecr-pull"}]
+                }
+            }
+
+        def simulate_principal_policy(self, **kwargs):
+            return {
+                "EvaluationResults": [
+                    {"EvalActionName": action, "EvalDecision": "allowed"}
+                    for action in kwargs["ActionNames"]
+                ]
+            }
+
+    clients = {
+        "ec2": FakeEc2(),
+        "iam": FakeIam(),
+        "sts": SimpleNamespace(
+            get_caller_identity=lambda: {"Account": "123456789012"}
+        ),
+    }
+    monkeypatch.setattr(service, "_client", lambda name: clients[name])
+
+    assert service._ec2_deployment_blockers() == []
+
+
 def test_ec2_deployment_uses_verified_image_and_public_http_confirmation(
     settings, monkeypatch
 ):
@@ -469,6 +577,10 @@ def test_ec2_deployment_uses_verified_image_and_public_http_confirmation(
 
         def delete_repository(self, **_kwargs):
             pass
+
+        def describe_images(self, **kwargs):
+            calls["describe_images"] = kwargs
+            return {"imageDetails": [{"imageTags": ["latest"]}]}
 
     class FakeWaiter:
         def wait(self, **_kwargs):
@@ -529,8 +641,40 @@ def test_ec2_deployment_uses_verified_image_and_public_http_confirmation(
                        "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo",
                        "AWS", "private-token")]
     assert calls["ingress"]["IpPermissions"][0]["IpRanges"][0]["CidrIp"] == "0.0.0.0/0"
+    assert calls["describe_images"]["imageIds"] == [{"imageTag": "latest"}]
     assert "docker run -d" in calls["instance"]["UserData"]
+    assert "dnf install -y docker\n" in calls["instance"]["UserData"]
+    assert "dnf install -y docker awscli" not in calls["instance"]["UserData"]
     assert "private-token" not in repr(result)
+
+
+def test_push_image_ignores_text_progress_and_accepts_json_events(monkeypatch):
+    class FakeImage:
+        attrs = {"Config": {"Labels": {"io.aidevops.preview": PREVIEW_ID}}}
+
+    class FakeImages:
+        def get(self, _image_id):
+            return FakeImage()
+
+        def remove(self, _image_ref, force=False):
+            pass
+
+    class FakeApi:
+        def tag(self, *_args, **_kwargs):
+            pass
+
+        def push(self, *_args, **_kwargs):
+            return iter(["Pushing layer", {"aux": {"Tag": "latest"}}])
+
+    engine = SimpleNamespace(images=FakeImages(), api=FakeApi(), close=lambda: None)
+    monkeypatch.setattr(docker, "from_env", lambda: engine)
+
+    AwsManagementService._push_image(
+        {"id": PREVIEW_ID, "image_id": "sha256:" + "a" * 64},
+        "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo",
+        "AWS",
+        "private-token",
+    )
 
 
 def test_localstack_ecr_license_failure_is_actionable_and_recorded(aws_service, monkeypatch):

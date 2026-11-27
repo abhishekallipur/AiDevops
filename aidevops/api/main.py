@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -19,6 +20,7 @@ from .. import __version__
 from ..auth import AuthStore, SESSION_COOKIE
 from .authz import require_admin
 from .aws import router as aws_router
+from .aws_infrastructure import router as aws_infrastructure_router
 from .docker import router as docker_router
 from ..config import Settings, load_settings
 from ..db import JobStore
@@ -37,6 +39,7 @@ from ..services import (
 )
 from ..services.preview import PreviewService
 from ..services.aws_manager import AwsManagementError, AwsManagementService
+from ..services.aws_infrastructure import AwsInfrastructureError, AwsInfrastructureService
 from ..services.docker_manager import DockerManagementError, DockerManagementService
 from ..planner.planner import prompt_preview
 from ..errors import ValidationError
@@ -148,6 +151,31 @@ _AWS_RESOURCE = re.compile(
     re.IGNORECASE,
 )
 _DOCKER_RESOURCE = re.compile(r"\b(docker|containers?)\b", re.IGNORECASE)
+_ASSISTANT_INSTANCE_ACTION = re.compile(
+    r"^aws\s+(?:(confirm)\s+)?(start|stop|reboot|terminate)\s+"
+    r"(i-[0-9a-f]{8,17})$",
+    re.IGNORECASE,
+)
+_ASSISTANT_DOCKER_ACTION = re.compile(
+    r"^aws\s+docker\s+(?:(confirm)\s+)?"
+    r"(list|logs|start|stop|restart|remove)\s+"
+    r"(i-[0-9a-f]{8,17})(?:\s+([0-9a-f]{12}|[0-9a-f]{64}))?$",
+    re.IGNORECASE,
+)
+_ASSISTANT_DOCKER_DEPLOY = re.compile(
+    r"^aws\s+docker\s+(?:(confirm)\s+)?deploy\s+"
+    r"(i-[0-9a-f]{8,17})\s+"
+    r"(\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/"
+    r"[a-z0-9][a-z0-9._/-]{0,254}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})\s+"
+    r"([A-Za-z0-9][A-Za-z0-9_.-]{0,62})\s+(\d{1,5})\s+(\d{1,5})$",
+    re.IGNORECASE,
+)
+_ASSISTANT_METRICS = re.compile(r"^aws\s+metrics\s+(i-[0-9a-f]{8,17})$", re.IGNORECASE)
+_ASSISTANT_COSTS = re.compile(
+    r"^aws\s+costs\s+(\d{4}-\d{2}-\d{2})\s+(\d{4}-\d{2}-\d{2})"
+    r"(?:\s+(daily|monthly))?$",
+    re.IGNORECASE,
+)
 
 
 def _monitoring_intents(messages: list[AssistantMessage]) -> set[str]:
@@ -264,6 +292,131 @@ def _live_monitoring_reply(request: Request, intents: set[str], query: str) -> s
     return "\n\n".join(replies)
 
 
+def _assistant_infrastructure_reply(request: Request, prompt: str) -> str | None:
+    instance_action = _ASSISTANT_INSTANCE_ACTION.fullmatch(prompt.strip())
+    docker_action = _ASSISTANT_DOCKER_ACTION.fullmatch(prompt.strip())
+    docker_deploy = _ASSISTANT_DOCKER_DEPLOY.fullmatch(prompt.strip())
+    metrics = _ASSISTANT_METRICS.fullmatch(prompt.strip())
+    costs = _ASSISTANT_COSTS.fullmatch(prompt.strip())
+    if not any((instance_action, docker_action, docker_deploy, metrics, costs)):
+        return None
+
+    username = require_admin(request, "AWS infrastructure management")
+    service = getattr(request.app.state, "aws_infrastructure_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503, detail="AWS infrastructure management is unavailable."
+        )
+    try:
+        if instance_action:
+            confirmed, action, instance_id = instance_action.groups()
+            if action.casefold() == "terminate" and not confirmed:
+                return (
+                    f"Termination is permanent. To confirm, send exactly: "
+                    f"aws confirm terminate {instance_id}"
+                )
+            result = service.manage_instance(
+                username,
+                instance_id,
+                action.casefold(),
+                confirmation=f"terminate {instance_id}" if confirmed else None,
+            )
+            return (
+                f"EC2 {action.casefold()} request for {instance_id}: "
+                f"{result.get('state', result.get('operation_state'))}. "
+                f"{result.get('message', '')}".strip()
+            )
+
+        if docker_action:
+            confirmed, action, instance_id, container_id = docker_action.groups()
+            action = action.casefold()
+            if action == "remove" and not confirmed:
+                if not container_id:
+                    return "Include the container ID, then ask for removal again."
+                return (
+                    "Container removal is permanent. To confirm, send exactly: "
+                    f"aws docker confirm remove {instance_id} {container_id}"
+                )
+            if action != "list" and not container_id:
+                return f"Include a container ID for the Docker {action} action."
+            result = service.send_docker_command(
+                username,
+                instance_id,
+                action,
+                container_id=container_id,
+                confirmation=f"remove {container_id}" if confirmed else None,
+            )
+            return (
+                f"SSM accepted Docker {action} for EC2 {instance_id}. "
+                f"Command ID: {result.get('command_id')}. "
+                "Check the command status in AWS management."
+            )
+
+        if docker_deploy:
+            (
+                confirmed,
+                instance_id,
+                image,
+                container_name,
+                container_port,
+                host_port,
+            ) = docker_deploy.groups()
+            if not confirmed:
+                return (
+                    "Deploying this container will map a host port that may be reachable "
+                    "through the instance security group. To confirm, send exactly: "
+                    f"aws docker confirm deploy {instance_id} {image} {container_name} "
+                    f"{container_port} {host_port}"
+                )
+            result = service.send_docker_command(
+                username,
+                instance_id,
+                "deploy",
+                image=image,
+                container_name=container_name,
+                container_port=int(container_port),
+                host_port=int(host_port),
+                confirmed=True,
+                public_access_confirmed=True,
+            )
+            return (
+                f"SSM accepted container deployment on EC2 {instance_id}. "
+                f"Command ID: {result.get('command_id')}. "
+                "Check the command status and output in AWS management."
+            )
+
+        if metrics:
+            result = service.get_instance_metrics(metrics.group(1))
+            return (
+                f"Metrics for {metrics.group(1)} (latest CloudWatch datapoints): "
+                f"CPU {result.get('cpu_percent') if result.get('cpu_percent') is not None else 'unavailable'}%, "
+                f"memory {result.get('memory_percent') if result.get('memory_percent') is not None else 'unavailable'}%, "
+                f"network in/out {result.get('network_in_bytes')}/{result.get('network_out_bytes')} bytes."
+            )
+
+        if costs:
+            start_text, end_text, granularity = costs.groups()
+            try:
+                report = service.get_cost_report(
+                    date.fromisoformat(start_text),
+                    date.fromisoformat(end_text),
+                    (granularity or "daily").upper(),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail="Use valid dates in YYYY-MM-DD format."
+                ) from exc
+            total = sum(bucket.get("amount", 0) for bucket in report.get("buckets", []))
+            return (
+                f"AWS Cost Explorer UnblendedCost for {start_text} to {end_text}: "
+                f"{total:.2f} {report.get('currency', 'USD')}. "
+                "Data may be delayed and can differ from the final bill."
+            )
+    except AwsInfrastructureError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # App factory
 # --------------------------------------------------------------------------- #
@@ -278,6 +431,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.docker_service = DockerManagementService(settings.db_path)
         application.state.aws_service = AwsManagementService(
             settings, application.state.previews, application.state.store
+        )
+        application.state.aws_infrastructure_service = AwsInfrastructureService(
+            settings,
+            application.state.aws_service.client_for,
+            settings.data_dir / "aws_management.db",
         )
         try:
             yield
@@ -303,6 +461,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(docker_router)
     app.include_router(aws_router)
+    app.include_router(aws_infrastructure_router)
 
     if settings.cors_origins:
         app.add_middleware(
@@ -509,6 +668,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request: Request,
             cfg: Settings = Depends(get_settings),
     ) -> dict[str, str]:
+        infrastructure_reply = _assistant_infrastructure_reply(
+            request, body.messages[-1].content
+        )
+        if infrastructure_reply is not None:
+            return {"reply": infrastructure_reply}
         intents = _monitoring_intents(body.messages)
         if intents:
             query = " ".join(
