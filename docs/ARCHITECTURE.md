@@ -81,14 +81,26 @@ Defined in `aidevops/models.py` (`ALLOWED_TRANSITIONS`) and enforced by
   available the system blocks and reports rather than degrading to host
   execution.
 
-## Extension points (intentionally not implemented)
+## AWS deployment and monitoring
 
-- **AWS/Terraform:** `DeploymentPlan.steps` already contains a gated `deploy`
-  step; a `generator/terraform.py` can follow the same write-validate pattern.
-- **Monitoring:** a read-only `execution` tool could query CloudWatch with the
-  same timeout/limit/approval machinery.
-- **Recovery:** bounded actions should be new registry tools with approvals, not
-  free-form commands.
+- Streamlit calls the administrator-protected `/api/aws` router; AWS credentials
+  remain on the backend and never reach the browser.
+- `AwsManagementService` is separate from preview and Docker management. It uses
+  typed boto3 calls, a LocalStack-only default with dummy credentials, durable
+  deployment/audit records, and read-only CloudWatch/EC2/S3 inventory.
+- A verified static image can publish its bounded `index.html` asset tree to S3.
+  Server images are pushed to ECR and launched on a configured EC2 AMI/profile.
+  The analyzer supplies the recommendation; an explicit user approval and a
+  separate public-access confirmation gate resource creation.
+- This implementation does not generate Terraform. It uses a fixed set of SDK
+  operations because the post-build flow needs to transfer an existing verified
+  image and deploy to LocalStack/AWS. Infrastructure choices are not model-
+  supplied commands. Cloud resource stop/delete and rollback remain future work.
+
+## Extension points
+
+- **Recovery:** bounded actions should be new typed operations with approvals,
+  not free-form commands.
 
 ## 2026-10-22 audit corrections
 

@@ -1,5 +1,8 @@
-"""Build/preview controls backed exclusively by the preview API."""
+"""Build/preview controls backed by the local preview and AWS APIs."""
+import re
 import streamlit as st
+
+from aidevops.auth import SESSION_COOKIE
 
 LABELS = {
     "AWAITING_BUILD_APPROVAL": "Snapshot ready for your review",
@@ -12,7 +15,80 @@ LABELS = {
 }
 
 
-def render(api, job_id, profile):
+_SESSION_TOKEN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+
+
+def _aws_api(api, session_cookie, method, path, **kwargs):
+    if not isinstance(session_cookie, str) or not _SESSION_TOKEN.fullmatch(session_cookie):
+        return None, "Sign in with the configured administrator account to deploy to AWS."
+    headers = dict(kwargs.pop("headers", {}))
+    headers["Cookie"] = f"{SESSION_COOKIE}={session_cookie}"
+    return api(method, path, headers=headers, **kwargs)
+
+
+def _render_aws_deploy(api, identity, session_cookie):
+    st.markdown("#### Deploy this image to AWS?")
+    recommendation, error = _aws_api(
+        api, session_cookie, "GET", f"/api/aws/previews/{identity}/recommendation"
+    )
+    if error:
+        st.info(error)
+        return
+    existing = recommendation.get("existing_deployment")
+    if existing:
+        if existing["state"] == "FAILED":
+            st.error("Cleanup may be incomplete. Review tagged AWS resources before retrying.")
+        else:
+            st.success(f"Deployment status: {existing['state']}")
+        if existing.get("url"):
+            st.link_button("Open deployed app", existing["url"])
+        st.caption("Resource: " + (existing.get("resource_id") or "creation pending"))
+        if existing.get("error"):
+            st.caption(existing["error"])
+        return
+    target = recommendation["target"]
+    label = "Amazon S3 static website" if target == "s3" else "Amazon EC2 container host"
+    st.write(f"**Recommended: {label}**")
+    st.write(recommendation["reason"])
+    for requirement in recommendation["requirements"]:
+        st.caption("Requirement · " + requirement)
+    st.warning(recommendation["cost_warning"])
+    consent = st.checkbox(
+        "I approve creating the AWS resources described above",
+        key="aws_deploy_consent_" + identity,
+    )
+    public_consent = st.checkbox(
+        "I understand this deployment will be publicly reachable over HTTP",
+        key="aws_public_consent_" + identity,
+    )
+    if st.button(
+        "Deploy to AWS",
+        key="aws_deploy_" + identity,
+        disabled=not consent or not public_consent,
+        type="primary",
+    ):
+        with st.spinner("Creating the approved AWS deployment…"):
+            result, deploy_error = _aws_api(
+                api,
+                session_cookie,
+                "POST",
+                f"/api/aws/previews/{identity}/deploy",
+                json={
+                    "target": target,
+                    "approved": True,
+                    "public_access_confirmed": public_consent,
+                },
+            )
+        if deploy_error:
+            st.error(deploy_error)
+        else:
+            st.success("Deployment created.")
+            if result.get("url"):
+                st.link_button("Open deployed app", result["url"])
+            st.caption(f"Resource: {result.get('resource_id') or 'creation pending'}")
+
+
+def render(api, job_id, profile, session_cookie=None):
     with st.expander("Privacy · see what is sent to AI"):
         if st.button("Show AI request preview", key="prompt_" + job_id):
             payload, error = api("GET", f"/api/jobs/{job_id}/ai-prompt")
@@ -77,8 +153,24 @@ def render(api, job_id, profile):
                         st.rerun()
             if state == "READY" and record.get("url"):
                 st.success("The container is running and its HTTP check passed. This is a basic availability check, not a full correctness or security assessment.")
-                st.link_button("Open my app", record["url"], type="primary")
+                app_url = record.get("open_url") or record["url"]
+                if profile and profile.get("framework") == "FastAPI":
+                    if app_url != record["url"] or not record.get("open_url"):
+                        st.info(
+                            "This FastAPI service is responding. Open its API explorer, or add a "
+                            "homepage route in your app if you expect a page at `/`."
+                        )
+                        st.link_button("Open API docs", app_url.rstrip("/") + ("" if app_url.endswith("/docs") else "/docs"), type="primary")
+                        st.link_button("Open service root", record["url"])
+                    else:
+                        st.link_button("Open my app", app_url, type="primary")
+                        st.link_button("Open API docs", record["url"].rstrip("/") + "/docs")
+                else:
+                    st.link_button("Open my app", app_url, type="primary")
                 st.caption("Expires at " + record["expires_at"] + " (UTC). Automatic expiry requires the backend to remain running.")
+            if state in {"BUILT", "READY", "STOPPED", "START_FAILED", "EXPIRED"} and record.get("image_id"):
+                with st.expander("AWS deployment", expanded=False):
+                    _render_aws_deploy(api, identity, session_cookie)
             if state in {"BUILDING", "STARTING", "STOPPING"}:
                 st.info("Work continues in the background. This panel checks for updates every two seconds.")
             if state in {"BUILDING", "STARTING", "READY", "CLEANUP_FAILED"}:

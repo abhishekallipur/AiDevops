@@ -1,6 +1,6 @@
 # Security
 
-Updated 2026-10-22. Local single-user application; no authentication, authorization or rate limiting. Bind API/UI to loopback. Never expose this service to untrusted networks.
+Updated 2026-11-25. Local single-user application. Docker and AWS management routes require the configured administrator session; other project APIs retain their existing access model. There is no general rate limiting. Bind API/UI to loopback and never expose this service to untrusted networks.
 
 Repository/archive contents and model responses are untrusted. Static analysis executes no code, skips known sensitive paths and symlinks, and applies file/depth/read bounds. Archives reject traversal, absolute paths, links and oversized content. Rejection can leave partial extracted data; multipart spooling occurs before endpoint reads, so bounded UploadFile.read is not a complete ingress quota. Malformed archive normalization and cleanup remain open.
 
@@ -15,6 +15,14 @@ Atomic SQLite transitions reject duplicate phase entry; stale-state saves cannot
 .env and data/ are ignored. Do not print secrets or persist provider responses/errors containing them. Secret scanning uses a denylist/regex and cannot guarantee absence. Arbitrary test output can itself contain sensitive data and is persisted; generic output redaction is not implemented. No dependency-vulnerability/SAST scan was run.
 
 No production/cloud/destructive operations were performed. Future infrastructure, permission or destructive actions must have explicit approval and independent verification.
+
+## AWS deployment and monitoring — 2026-11-25
+
+AWS management is a separate typed SDK service, not an arbitrary command or Terraform runner. It defaults to LocalStack with dummy credentials and does not fall back to AWS. Real AWS access requires the operator to set `AIDEVOPS_AWS_MODE=aws`; credentials are resolved only by the backend AWS SDK chain, optionally selected with the non-secret `AWS_PROFILE` name. The AWS setup page never accepts access keys; configure an SSO profile or role on the backend host. Endpoints require the configured administrator session. Credentials, instance user data, and arbitrary resource metadata are not returned to Streamlit.
+
+The post-build deploy endpoint requires `approved=true` and an independent `public_access_confirmed=true`. S3 deployments create a new public static website bucket with only `s3:GetObject` allowed; EC2 deployments publish the verified image to ECR, create a security group permitting public TCP/80, and launch one configured `t3.micro` instance. Both paths can incur charges and expose the app publicly. Do not deploy private content. EC2 uses the configured instance profile; grant only the permissions needed to pull the deployment image. The LocalStack account ID is an emulator identity, not proof of an AWS account.
+
+Static image extraction is label-verified, network-disabled, read-only, capped at 5,000 files/100 MiB, and rejects links/path traversal. Deployment records and operator outcomes are stored in a separate SQLite audit database. Failed deployments attempt cleanup of resources created by that operation; cloud permission failures can prevent cleanup, which is surfaced for review. Successful deployments currently have no Aidevops stop/delete operation. CloudWatch polling is read-only and capped at ten EC2 metrics per dashboard refresh. LocalStack was not running during implementation; mocked tests do not establish real AWS/LocalStack compatibility or production readiness.
 
 ## Privacy and local previews — 2026-10-23
 

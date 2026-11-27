@@ -189,6 +189,7 @@ class PreviewService:
                 digest=self.digest(folder), file_count=sum(p.is_file() for p in folder.rglob("*")),
                 image_tag="aidevops-preview:" + identity, image_id=None,
                 container_name="aidevops-" + identity, container_id=None, url=None,
+                open_url=None,
                 log="", error=None, expires_at=None, health_path=None, port=None,
                 created_at=datetime.now(timezone.utc).isoformat())
             record["suggested_port"] = job.profile.suggested_port or job.plan.exposed_port
@@ -290,11 +291,34 @@ class PreviewService:
             if code != 0 or reason:
                 raise ValidationError("Docker could not remove this preview container; retry cleanup")
 
+    @staticmethod
+    def _resolve_open_url(client, base_url, framework, health_path):
+        if framework != "FastAPI" or health_path == "/":
+            return base_url
+
+        def status_code(url):
+            try:
+                with client.stream("GET", url, timeout=2) as response:
+                    return response.status_code
+            except httpx.HTTPError:
+                return None
+
+        root_status = status_code(base_url)
+        if root_status is not None and 200 <= root_status < 400:
+            return base_url
+        docs_url = base_url.rstrip("/") + "/docs"
+        docs_status = status_code(docs_url)
+        if docs_status is not None and 200 <= docs_status < 400:
+            return docs_url
+        return base_url
+
     def start(self, identity, port, path, environment, event):
         record = self.get(identity)
         envfile = self.root / identity / ("runtime-" + uuid.uuid4().hex + ".env")
         secrets = list(environment.values())
         try:
+            job = self.jobs.get(record["job_id"])
+            framework = job.profile.framework if job.profile else None
             self.remove_container(record)
             env_args = []
             if environment:
@@ -325,9 +349,18 @@ class PreviewService:
                         with httpx.Client(trust_env=False, follow_redirects=False, timeout=2) as client:
                             with client.stream("GET", url + path) as response:
                                 if 200 <= response.status_code < 400:
+                                    open_url = self._resolve_open_url(
+                                        client, url, framework, path
+                                    )
                                     with self.lock:
                                         if not event.is_set():
-                                            self.update(identity, state="READY", container_id=info["Id"], url=url)
+                                            self.update(
+                                                identity,
+                                                state="READY",
+                                                container_id=info["Id"],
+                                                url=url,
+                                                open_url=open_url,
+                                            )
                                             return
                     except httpx.HTTPError:
                         pass

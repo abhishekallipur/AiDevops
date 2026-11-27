@@ -39,3 +39,21 @@ Build deadline=min(global,600s); startup HTTP probe up to45s; startup Docker cli
 ## Build strategy changes — 2026-10-23
 
 Preview builds now use AIDEVOPS_BUILD_TIMEOUT_SECONDS (default600; env loader bounds1..1800) rather than the120s test deadline. Test/tool timeout behavior otherwise stays unchanged. Build output callbacks persist bounded filtered logs while Docker runs. Runtime port defaults derive from the selected strategy/image EXPOSE metadata. Static serving uses Nginx USER101 on8080 with /tmp state paths, retaining dropped-capability runtime policy; no extra host mounts or Docker permissions were added.
+
+## AWS management operations — 2026-11-25
+
+AWS operations are not registered project-shell tools. The administrator-only
+`/api/aws` router calls a dedicated service with fixed boto3 operations:
+
+| API action | Permission / behavior |
+|---|---|
+| `GET /api/aws/status` | Read-only STS identity check; LocalStack only by default |
+| `GET /api/aws/overview` | Read-only EC2/S3 inventory; at most ten CloudWatch CPU metric requests |
+| `GET /api/aws/deployments` | Read local deployment/audit metadata |
+| `GET /api/aws/previews/{id}/recommendation` | Requires a verified local image; recommends S3 for static apps and EC2 for server apps |
+| `POST /api/aws/previews/{id}/deploy` | Requires `approved=true` and `public_access_confirmed=true`; fixed S3 website or ECR/EC2 flow |
+
+Real AWS credentials are never accepted in request bodies; `AIDEVOPS_AWS_MODE=aws`
+must be configured by the operator to enable the AWS SDK credential chain.
+Failed deployments attempt to remove resources created in that operation.
+Successful deployments currently have no Aidevops stop/delete operation.

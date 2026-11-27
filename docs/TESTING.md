@@ -1,6 +1,6 @@
 # Testing
 
-Current verification: 2026-10-22, Asia/Calcutta. All commands from E:/Aidevops in PowerShell.
+Historical baseline: 2026-10-22, Asia/Calcutta. All commands from E:/Aidevops in PowerShell.
 
 | Exact command | Observed result |
 |---|---|
@@ -17,7 +17,7 @@ Regression coverage includes all execution result statuses, persisted policy exc
 
 Tests use temporary SQLite databases/workspaces and fake providers. AppTest uses fake HTTP and does not establish browser responsiveness/accessibility. smoke_local.py uses real loopback servers and Docker with disposable sources/data, clears the provider key in child processes, terminates its servers, and does not modify existing runtime data. It is opt-in because it can pull images and download/install dependencies inside containers. Python and Node were actually executed; other runtime commands were not.
 
-Not run: browser interactions/mobile/accessibility, live LLM/provider requests in this audit, generated image builds/health checks, remote GitHub Actions, Terraform validation/plan/apply, AWS/CloudWatch/recovery, SAST/dependency vulnerability scans. No frontend production bundle exists (Streamlit). No lint/type/format tool is configured; these checks are not claimed as passing. pip check checks installed dependency consistency, not vulnerabilities.
+Not run in the historical baseline: browser interactions/mobile/accessibility, live LLM/provider requests, generated image builds/health checks, remote GitHub Actions, Terraform validation/plan/apply, AWS/CloudWatch/recovery, SAST/dependency vulnerability scans. No frontend production bundle exists (Streamlit). No lint/type/format tool is configured; these checks are not claimed as passing. pip check checks installed dependency consistency, not vulnerabilities.
 
 Historical 2026-10-21 live AI/container checks are retained in CHANGELOG.md. They are historical observations, not repeat checks of this revision.
 
@@ -60,3 +60,40 @@ Final desktop browser check: existing analyzed project opened; new Build & open 
 ## SaaS workspace refresh — 2026-10-23
 Replaced the mint review page with a navy sidebar, indigo accents, soft neutral workspace, responsive hero and local CSS illustrations. Added subtle entrance/hover/floating animation with reduced-motion support and visible keyboard focus. Project screens open Build & preview first; Project overview, Setup files and Checks & results are separate tabs. Preview ports, HTTP path and expiry remain prefilled; optional configuration is under Advanced preview settings. Resource removal is collapsed. Existing backend APIs and explicit build/start/check approvals are preserved.
 Validation: 124 passed, 1 Windows symlink privilege skip; includes 15 UI AppTests covering navigation, approvals and exact default launch payload. Existing local Streamlit server restarted to load changed imported module/theme. Browser inspected narrow-screen welcome and existing project navigation; no desktop-width or assistive-technology audit. This change does not claim new runtime coverage for generated apps.
+
+## AWS deployment and monitoring — 2026-11-25
+
+| Exact command | Observed result |
+|---|---|
+| `.\.venv\Scripts\python.exe -m pytest -o addopts="" -rs` | 179 passed, 3 skipped in 32.02s |
+| `.\.venv\Scripts\python.exe -m pytest tests/test_aws_management.py tests/test_aws_integration.py tests/test_ui.py -q` | 39 passed, 1 skipped; LocalStack integration skipped unless enabled |
+| `$env:AIDEVOPS_AWS_INTEGRATION = '1'; $env:AIDEVOPS_AWS_ENDPOINT_URL = 'http://localhost:4566'; .\.venv\Scripts\python.exe -m pytest tests/test_aws_integration.py -q` | 1 passed against LocalStack; read-only STS identity check |
+| `.\.venv\Scripts\python.exe -m compileall -q aidevops tests` | PASS |
+| `.\.venv\Scripts\python.exe -m pip check` | PASS: no broken requirements |
+| `git diff --check` | PASS |
+
+Mocked AWS tests cover LocalStack-only credentials/defaults, explicit real-AWS mode separation, endpoint-secret redaction, static/S3 and server/EC2 recommendations, public-access and deploy approval gates, bounded static-archive validation, mocked S3 deployment/audit, mocked ECR/EC2 launch arguments, capped CloudWatch requests, and administrator authorization. The opt-in AWS integration test contacts only LocalStack STS; it passed against the local service. A separate local service check confirmed the backend could list the empty EC2/S3 overview. No real AWS calls or deployments were performed. These checks do not establish end-to-end Docker image push, LocalStack deployment compatibility, bootstrapped EC2 app health, or real AWS permissions/cost behavior.
+
+## Project workflow and monitoring assistant update
+
+| Exact command | Observed result |
+|---|---|
+| `.\.venv\Scripts\python.exe -m pytest -o addopts="" -ra` | 189 passed, 3 skipped in 35.09s |
+| `.\.venv\Scripts\python.exe -m pytest tests/test_ui.py -q` | 29 Streamlit UI tests passed |
+| `.\.venv\Scripts\python.exe -m compileall -q aidevops tests` | PASS |
+| `.\.venv\Scripts\python.exe -m pip check` | PASS: no broken requirements |
+| `git diff --check` | PASS |
+
+The project home now presents archive upload and local-folder entry together. Build and preview remain the primary project workflow; overview, setup files, and technical check results are expandable details, while required approvals remain visible. The assistant has a dedicated workspace page, submits chat to the backend, and has mocked UI coverage for sending a question and displaying a response. A regression test verifies FastAPI previews offer `/docs` when the saved root URL is unavailable. Existing API tests cover administrator-only live Docker and EC2 readings; general questions still use the configured provider. The three skipped tests require Windows symlink privileges, LocalStack integration opt-in, or Docker Engine integration opt-in. No real provider requests or deployment actions were run.
+
+## AWS connection and deployment improvements — 2026-11-27
+
+| Exact command | Observed result |
+|---|---|
+| `.\.venv\Scripts\python.exe -m pytest tests/test_aws_management.py tests/test_aws_integration.py -o addopts="" -q` | 20 passed, 1 LocalStack opt-in skipped |
+| `.\.venv\Scripts\python.exe -m pytest tests/test_ui.py -o addopts="" -q` | 29 passed |
+| `.\.venv\Scripts\python.exe -m pytest -o addopts="" -ra` | 192 passed, 3 skipped in 50.45s |
+| `.\.venv\Scripts\python.exe -m compileall -q aidevops tests` | PASS |
+| `git diff --check` | PASS |
+
+AWS connection failures now distinguish expired/missing SSO credentials and provide a safe refresh instruction. AWS authorization failures identify the rejected operation and the relevant permission category without returning AWS error details. Static S3 assets upload concurrently with a hard limit of eight workers. No AWS resources were created or modified; the current local SSO token could not be retrieved during read-only account verification.

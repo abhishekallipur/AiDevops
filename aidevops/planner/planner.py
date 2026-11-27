@@ -117,8 +117,11 @@ def mock_plan(profile: ProjectProfile, reason: str) -> DeploymentPlan:
         ),
         PlanStep(
             id="deploy",
-            title="Deploy (not implemented in this milestone)",
-            description="AWS/Terraform deployment is a planned extension point; nothing is applied here.",
+            title="Deploy to AWS (separate approval required)",
+            description=(
+                "After a verified image is built, Aidevops can recommend S3 for static sites "
+                "or EC2 for server apps. Deployment is optional and requires separate approval."
+            ),
             command=None,
             requires_approval=True,
         ),

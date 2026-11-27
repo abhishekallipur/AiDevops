@@ -18,6 +18,10 @@ pytest.importorskip("streamlit.testing.v1")
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from aidevops.ui import aws_setup, docker_dashboard  # noqa: E402
+from aidevops.ui.docker_dashboard import _docker_api  # noqa: E402
+from aidevops.ui.aws_dashboard import _aws_api, _aws_error_guidance  # noqa: E402
+
 APP_PATH = str(Path(__file__).resolve().parents[1] / "aidevops" / "ui" / "streamlit_app.py")
 
 JOB_ID = "job_test123456"
@@ -137,15 +141,222 @@ def open_review(app):
 
 def test_ui_renders_without_exception(app):
     assert not app.exception
-    assert any(b.label == "Try an example project" for b in app.button)
+    assert any(b.label == "Open the example project" for b in app.button)
+    assert any(b.label == "Review this upload" for b in app.button)
+    assert any("Build and deploy your app" in m.value for m in app.title)
+
+
+def test_docker_sidebar_section_requires_login(app):
+    app.radio[0].set_value("Docker monitoring").run()
+
+    assert not app.exception
+    assert any("Docker overview" in title.value for title in app.title)
+    assert any("Sign in with the configured administrator" in item.value for item in app.error)
+
+
+def test_aws_sidebar_section_requires_login(app):
+    app.radio[0].set_value("AWS monitoring").run()
+
+    assert not app.exception
+    assert any("AWS monitoring" in title.value for title in app.title)
+    assert any("configured administrator" in item.value for item in app.error)
+    assert any("same hostname" in item.value for item in app.info)
+
+
+def test_aws_setup_page_guides_real_credentials_without_collecting_keys(app):
+    app.radio[0].set_value("AWS setup").run()
+
+    assert not app.exception
+    assert any("Set up real AWS" in title.value for title in app.title)
+    assert any("never asks for or stores AWS access keys" in item.value for item in app.info)
+    assert any(button.label == "Check AWS connection" for button in app.button)
+
+
+def test_aws_setup_connection_check_reports_the_backend_identity(monkeypatch):
+    monkeypatch.setattr(
+        aws_setup,
+        "_aws_api",
+        lambda *_args, **_kwargs: (
+            {
+                "available": True,
+                "mode": "aws",
+                "account_id": "123456789012",
+                "region": "us-east-1",
+            },
+            None,
+        ),
+    )
+    at = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    at.radio[0].set_value("AWS setup").run()
+    next(button for button in at.button if button.label == "Check AWS connection").click().run()
+
+    assert not at.exception
+    assert any("Connected to AWS account 123456789012" in item.value for item in at.success)
+
+
+def test_ai_assistant_has_a_dedicated_workspace_section(app):
+    app.radio[0].set_value("AI assistant").run()
+
+    assert not app.exception
+    assert any("Aidevops assistant" in item.value for item in app.title)
+    assert any("live Docker and AWS status" in item.value for item in app.caption)
     assert "assistant_messages" in app.session_state
-    assert any(t.label == "Upload a project" for t in app.tabs)
-    assert any("Your project." in m.value for m in app.markdown)
+
+
+def test_ai_assistant_submits_chat_and_displays_reply(monkeypatch):
+    calls = []
+
+    def request(method, url, **kwargs):
+        if urlparse(url).path == "/api/assistant/chat":
+            calls.append((method, kwargs))
+            return httpx.Response(200, json={"reply": "Here is the answer."})
+        return fake_request(method, url, **kwargs)
+
+    monkeypatch.setattr(httpx, "request", request)
+    at = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    at.radio[0].set_value("AI assistant").run()
+    at.chat_input[0].set_value("Explain my project workflow").run()
+
+    assert not at.exception
+    assert calls[0][0] == "POST"
+    assert calls[0][1]["json"]["messages"][-1] == {
+        "role": "user",
+        "content": "Explain my project workflow",
+    }
+    assert at.session_state["assistant_messages"][-1] == {
+        "role": "assistant",
+        "content": "Here is the answer.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("Not Found", "older version"),
+        ("Could not connect to LocalStack", "/_localstack/health"),
+    ],
+)
+def test_aws_error_guidance_identifies_route_and_localstack_issues(error, expected):
+    assert expected in _aws_error_guidance(error)
+
+
+def test_aws_api_forwards_only_the_session_cookie():
+    calls = []
+
+    def fake_api(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"available": True}, None
+
+    result, error = _aws_api(
+        fake_api,
+        "b" * 32,
+        "GET",
+        "/api/aws/status",
+        headers={"X-Test": "kept"},
+    )
+
+    assert result == {"available": True}
+    assert error is None
+    assert calls[0][2]["headers"] == {
+        "X-Test": "kept",
+        "Cookie": "aidevops_session=" + "b" * 32,
+    }
+
+
+def test_docker_api_forwards_only_the_session_cookie():
+    calls = []
+
+    def fake_api(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"ok": True}, None
+
+    result, error = _docker_api(
+        fake_api,
+        "a" * 32,
+        "GET",
+        "/api/docker/containers",
+        headers={"X-Test": "kept"},
+    )
+
+    assert result == {"ok": True}
+    assert error is None
+    assert calls[0][2]["headers"] == {
+        "X-Test": "kept",
+        "Cookie": "aidevops_session=" + "a" * 32,
+    }
+
+
+def test_docker_api_does_not_send_a_missing_session_cookie():
+    called = False
+
+    def fake_api(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    result, error = _docker_api(fake_api, None, "GET", "/api/docker/containers")
+
+    assert result is None
+    assert "administrator" in error
+    assert called is False
+
+
+def test_docker_dashboard_uses_controlled_live_refresh_and_hides_logs(monkeypatch):
+    container_id = "a" * 64
+    calls = []
+
+    def fake_docker_api(api, cookie, method, path, **kwargs):
+        calls.append(path)
+        if path == "/api/docker/containers":
+            return [
+                {
+                    "id": container_id,
+                    "name": "web",
+                    "image": "web:latest",
+                    "status": "running",
+                    "health_status": "healthy",
+                }
+            ], None
+        if path == f"/api/docker/containers/{container_id}":
+            return {
+                "id": container_id,
+                "name": "web",
+                "image": "web:latest",
+                "status": "running",
+                "health_status": "healthy",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "uptime_seconds": 300,
+                "ports": ["127.0.0.1:8080->80/tcp"],
+            }, None
+        if path.endswith("/stats"):
+            return {
+                "cpu_percent": 12.5,
+                "memory_usage_bytes": 1000,
+                "memory_limit_bytes": 2000,
+                "memory_percent": 50,
+                "network_rx_bytes": 1024,
+                "network_tx_bytes": 2048,
+                "block_read_bytes": 4096,
+                "block_write_bytes": 8192,
+            }, None
+        return {"logs": "not requested"}, None
+
+    monkeypatch.setattr(docker_dashboard, "_docker_api", fake_docker_api)
+    app = AppTest.from_file(APP_PATH, default_timeout=30).run()
+    app.radio[0].set_value("Docker monitoring").run()
+
+    assert not app.exception
+    assert any("Docker overview" in item.value for item in app.title)
+    assert any(item.label == "Live refresh" and item.value == 5 for item in app.selectbox)
+    assert any(item.label == "Container information" for item in app.expander)
+    assert any(item.label == "Recent logs" for item in app.expander)
+    assert any(item.label == "More actions" for item in app.expander)
+    assert any(path.endswith("/stats") for path in calls)
+    assert not any(path.endswith("/logs") for path in calls)
 
 
 def test_ui_uses_native_theme_settings(app):
     assert not any(r.label == "Choose app theme" for r in app.radio)
-    assert any(".stApp { background:#f6f7fb; color:var(--aid-ink); }" in m.value for m in app.markdown)
+    assert any("background: #f7f8fa;" in m.value for m in app.markdown)
 
 
 def test_ui_shows_plan_and_collapsed_files(app):
@@ -158,7 +369,7 @@ def test_ui_shows_plan_and_collapsed_files(app):
 
 
 def test_ui_create_and_run_example_sets_job(app):
-    next(b for b in app.button if b.label == "Try an example project").click().run()
+    next(b for b in app.button if b.label == "Open the example project").click().run()
     assert not app.exception
     assert app.session_state["job_id"] == JOB_ID
     assert any("Ready for your review" in m.value for m in app.markdown)
@@ -175,7 +386,7 @@ def test_new_job_is_not_overridden_by_recent_selection(monkeypatch):
         return fake_request(method, url, **kwargs)
     monkeypatch.setattr(httpx, "request", request)
     at = AppTest.from_file(APP_PATH, default_timeout=30).run()
-    next(b for b in at.button if b.label == "Try an example project").click().run()
+    next(b for b in at.button if b.label == "Open the example project").click().run()
     assert not at.exception
     assert at.session_state["job_id"] == new_id
     at.run()
@@ -219,7 +430,7 @@ def test_new_project_returns_to_onboarding(app):
     open_review(app)
     next(b for b in app.button if b.label == "＋ New project").click().run()
     assert not app.exception
-    assert any(b.label == "Try an example project" for b in app.button)
+    assert any(b.label == "Open the example project" for b in app.button)
     assert not any(c.label.startswith("I have reviewed") for c in app.checkbox)
 
 
@@ -312,11 +523,47 @@ def test_preview_start_consent_can_enable_form(monkeypatch):
     assert not at.exception
 
 
+def test_fastapi_preview_offers_docs_when_saved_root_url_is_unavailable(monkeypatch):
+    record = {
+        "id": "preview_test",
+        "state": "READY",
+        "url": "http://127.0.0.1:45678",
+        "expires_at": "2026-11-25T15:00:00+00:00",
+        "file_count": 3,
+        "digest": "a" * 64,
+        "image_id": "sha256:" + "a" * 64,
+        "log": "",
+        "error": None,
+    }
+
+    def request(method, url, **kwargs):
+        if urlparse(url).path.endswith("/previews"):
+            return httpx.Response(200, json=[record])
+        return fake_request(method, url, **kwargs)
+
+    monkeypatch.setattr(httpx, "request", request)
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    open_review(at)
+
+    links = at.get("link_button")
+    assert any(
+        item.label == "Open API docs"
+        and item.url == "http://127.0.0.1:45678/docs"
+        for item in links
+    )
+    assert any(
+        item.label == "Open service root"
+        and item.url == "http://127.0.0.1:45678"
+        for item in links
+    )
+    assert not at.exception
+
+
 def test_workspace_puts_build_before_supporting_details(app):
     open_review(app)
-    assert [tab.label for tab in app.tabs] == [
-        "Build & preview", "Project overview", "Setup files", "Checks & results"
-    ]
-    assert any(b.label == "Prepare build snapshot" for b in app.tabs[0].button)
-    assert any(b.label == "Download all setup files" for b in app.tabs[2].get("download_button"))
+    assert not app.tabs
+    assert any(b.label == "Prepare build snapshot" for b in app.button)
+    assert any(e.label == "Project overview" for e in app.expander)
+    assert any(e.label == "Setup files" for e in app.expander)
+    assert any(b.label == "Download all setup files" for b in app.get("download_button"))
     assert not app.exception

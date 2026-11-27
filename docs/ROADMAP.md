@@ -24,23 +24,24 @@ input; docs accurate.
 - **Acceptance:** all checks green; container test and live LLM results recorded
   with evidence.
 
-## Phase 3 — AWS deployment via Terraform (approval-gated)
+## Phase 3 — AWS deployment (typed and approval-gated)
 
-- A real `generator/terraform.py` that produces reviewed `.tf` for a plan,
-  mirroring the write-then-validate pattern.
-- Read-only tool `terraform_fmt` / `terraform_validate`; **no `apply`** without an
-  explicit, separate approval tool.
-- **Acceptance:** generated Terraform passes `terraform fmt -check` and
-  `terraform validate`; `plan` produces a summary; nothing is applied
-  automatically; every step has an execution record.
+- Implemented: verified static images can deploy to S3; server images can publish
+  to ECR and run on configured EC2. A project-type recommendation precedes a
+  separate deployment approval and public-access confirmation.
+- Implemented: AWS access defaults to LocalStack with dummy credentials; AWS mode
+  is explicit. SDK calls are typed and do not execute model-produced commands.
+- Follow-up: add Terraform artifact/plan review, narrower per-action permission
+  scoping, and independently verified rollback/cleanup. Current success paths are
+  not yet verified against LocalStack or real AWS.
 
 ## Phase 4 — Monitoring and verification
 
-- Read-only CloudWatch/health tools behind the same registry, timeout, and
-  approval machinery.
-- Post-deploy health verification with recorded evidence.
-- **Acceptance:** a deploy can be followed by a recorded health check; failures
-  are surfaced, not swallowed.
+- Implemented: administrator-only account status, EC2/S3 inventory, bounded
+  CloudWatch CPU metrics, and persistent Aidevops deployment status.
+- Follow-up: add deployment health checks, S3 object/traffic metrics, stopped
+  instance controls, and localstack/real-account verification with recorded
+  evidence.
 
 ## Phase 5 — Bounded recovery
 

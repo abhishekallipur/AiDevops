@@ -16,7 +16,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field, model_validator
 
 from .. import __version__
-from ..auth import AuthStore
+from ..auth import AuthStore, SESSION_COOKIE
+from .authz import require_admin
+from .aws import router as aws_router
+from .docker import router as docker_router
 from ..config import Settings, load_settings
 from ..db import JobStore
 from ..errors import AIDevOpsError, UnsafeInputError
@@ -33,13 +36,14 @@ from ..services import (
     run_pipeline,
 )
 from ..services.preview import PreviewService
+from ..services.aws_manager import AwsManagementError, AwsManagementService
+from ..services.docker_manager import DockerManagementError, DockerManagementService
 from ..planner.planner import prompt_preview
 from ..errors import ValidationError
 from ..privacy import redact
 from ..planner.provider import AnthropicProvider, OpenAIProvider
 
 log = get_logger("aidevops.api")
-SESSION_COOKIE = "aidevops_session"
 LOGIN_PAGE = Path(__file__).resolve().parents[2] / "login.html"
 THEME_SETTINGS_PATH = LOGIN_PAGE.parent / "data" / "ui_theme.json"
 LOGOUT_PAGE = """<!doctype html>
@@ -134,6 +138,132 @@ class AssistantChatRequest(BaseModel):
         return self
 
 
+_MONITORING_ACTION = re.compile(
+    r"\b(cpu|ram|memory|usage|status|health|running|stopped|network|traffic|"
+    r"metrics?|resources?|list|show|monitor|current|latest)\b",
+    re.IGNORECASE,
+)
+_AWS_RESOURCE = re.compile(
+    r"\b(aws|ec2|instances?|cloudwatch|s3|buckets?|deployment)\b",
+    re.IGNORECASE,
+)
+_DOCKER_RESOURCE = re.compile(r"\b(docker|containers?)\b", re.IGNORECASE)
+
+
+def _monitoring_intents(messages: list[AssistantMessage]) -> set[str]:
+    user_messages = [message.content for message in messages if message.role == "user"]
+    if not user_messages or not _MONITORING_ACTION.search(" ".join(user_messages[-2:])):
+        return set()
+    recent = " ".join(user_messages[-2:])
+    intents = set()
+    if _AWS_RESOURCE.search(recent):
+        intents.add("aws")
+    if _DOCKER_RESOURCE.search(recent):
+        intents.add("docker")
+    return intents
+
+
+def _live_monitoring_reply(request: Request, intents: set[str], query: str) -> str:
+    require_admin(request, "live infrastructure monitoring")
+    replies = []
+    lowered = query.casefold()
+
+    if "aws" in intents:
+        service = getattr(request.app.state, "aws_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail="AWS monitoring is unavailable.")
+        include_memory = any(word in lowered for word in ("memory", "ram"))
+        overview = service.overview(include_memory=include_memory)
+        instances = overview.get("instances", [])
+        if not instances:
+            replies.append(
+                f"No EC2 instances were returned from {overview.get('mode')} in "
+                f"{overview.get('region')}; there are no instance CPU or RAM readings."
+            )
+        else:
+            lines = [
+                f"EC2 status from {overview.get('mode')} · region {overview.get('region')}:"
+            ]
+            for instance in instances[:10]:
+                label = instance.get("name") or instance.get("id") or "Unnamed instance"
+                state = instance.get("state") or "unknown"
+                details = [state]
+                if any(word in lowered for word in ("cpu", "usage", "metric")):
+                    cpu = instance.get("cpu_percent")
+                    details.append(
+                        f"CPU {cpu:.1f}% (latest CloudWatch average)"
+                        if cpu is not None
+                        else "CPU data unavailable"
+                    )
+                if include_memory:
+                    memory = instance.get("memory_percent")
+                    details.append(
+                        f"RAM {memory:.1f}%"
+                        if memory is not None
+                        else "RAM data unavailable; the EC2 CloudWatch Agent must publish CWAgent/mem_used_percent"
+                    )
+                lines.append(f"- {label} ({instance.get('id')}): " + " · ".join(details))
+            if len(instances) > 10:
+                lines.append(f"Showing 10 of {len(instances)} instances.")
+            replies.append("\n".join(lines))
+        if "s3" in lowered or "bucket" in lowered:
+            replies.append(f"S3 buckets in this region: {len(overview.get('buckets', []))}.")
+        if "deployment" in lowered:
+            deployments = overview.get("deployments", [])
+            replies.append(
+                "Aidevops deployment records: "
+                + (
+                    ", ".join(
+                        f"{item.get('target', '').upper()} {item.get('state')} "
+                        f"({item.get('resource_id') or item.get('id')})"
+                        for item in deployments[:10]
+                    )
+                    if deployments
+                    else "none"
+                )
+            )
+
+    if "docker" in intents:
+        service = getattr(request.app.state, "docker_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail="Docker monitoring is unavailable.")
+        containers = service.list_containers()
+        if not containers:
+            replies.append("There are no Docker containers on the local Docker Engine.")
+        else:
+            wants_stats = any(
+                word in lowered for word in ("cpu", "ram", "memory", "usage", "metric")
+            )
+            running = [item for item in containers if item.get("status") == "running"]
+            selected = running[:5] if wants_stats and running else containers[:15]
+            lines = ["Docker containers on the local Engine:"]
+            for item in selected:
+                label = item.get("name") or item.get("id", "")[:12]
+                detail = item.get("status") or "unknown"
+                if wants_stats and detail == "running":
+                    stats = service.get_stats(item["id"])
+                    cpu = stats.get("cpu_percent")
+                    memory = stats.get("memory_percent")
+                    detail += (
+                        f" · CPU {cpu:.1f}%" if cpu is not None else " · CPU data unavailable"
+                    )
+                    detail += (
+                        f" · memory {memory:.1f}%"
+                        if memory is not None
+                        else " · memory data unavailable"
+                    )
+                lines.append(f"- {label}: {detail}")
+            if wants_stats and not any(item.get("status") == "running" for item in selected):
+                lines.append("Start a container to collect CPU and memory readings.")
+            if len(containers) > len(selected):
+                lines.append(
+                    f"Showing {len(selected)} of {len(containers)} containers to limit stats requests."
+                )
+            replies.append("\n".join(lines))
+
+    return "\n\n".join(replies)
+
+
 # --------------------------------------------------------------------------- #
 # App factory
 # --------------------------------------------------------------------------- #
@@ -145,9 +275,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application):
         application.state.previews = PreviewService(settings, application.state.store)
+        application.state.docker_service = DockerManagementService(settings.db_path)
+        application.state.aws_service = AwsManagementService(
+            settings, application.state.previews, application.state.store
+        )
         try:
             yield
         finally:
+            application.state.docker_service.close()
             application.state.previews.close()
 
     app = FastAPI(
@@ -166,6 +301,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         admin_username=settings.admin_username,
         admin_password=settings.admin_password,
     )
+    app.include_router(docker_router)
+    app.include_router(aws_router)
 
     if settings.cors_origins:
         app.add_middleware(
@@ -191,6 +328,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(AIDevOpsError)
     async def _app_error(_: Request, exc: AIDevOpsError) -> JSONResponse:
         return JSONResponse(status_code=exc.http_status, content=exc.to_dict())
+
+    @app.exception_handler(DockerManagementError)
+    async def _docker_error(_: Request, exc: DockerManagementError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    @app.exception_handler(AwsManagementError)
+    async def _aws_error(_: Request, exc: AwsManagementError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -361,8 +506,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/assistant/chat")
     def assistant_chat(
             body: AssistantChatRequest,
+            request: Request,
             cfg: Settings = Depends(get_settings),
     ) -> dict[str, str]:
+        intents = _monitoring_intents(body.messages)
+        if intents:
+            query = " ".join(
+                message.content
+                for message in body.messages
+                if message.role == "user"
+            )
+            return {"reply": _live_monitoring_reply(request, intents, query)}
+
         if cfg.local_only:
             raise HTTPException(
                 status_code=503,

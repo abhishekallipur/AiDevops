@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated 2026-10-22. Labels: VERIFIED = implementation and relevant observed check; IMPLEMENTED — NOT VERIFIED = code without successful check; PARTIAL = limited functionality; PLANNED = absent; BLOCKED = specific missing prerequisite; BROKEN = confirmed failure. Verification scope matters.
+Updated 2026-11-25. Labels: VERIFIED = implementation and relevant observed check; IMPLEMENTED — NOT VERIFIED = code without successful check; PARTIAL = limited functionality; PLANNED = absent; BLOCKED = specific missing prerequisite; BROKEN = confirmed failure. Verification scope matters.
 
 | Feature | Status | Evidence and limits |
 |---|---|---|
@@ -22,7 +22,11 @@ Updated 2026-10-22. Labels: VERIFIED = implementation and relevant observed chec
 | Image building | PARTIAL | approval gate exists; generated-only build context lacks source; not scheduled by execute_job |
 | Streamlit interactions | VERIFIED | 6 headless AppTest cases with fake HTTP; live health+HTML only |
 | Browser responsiveness/accessibility | IMPLEMENTED — NOT VERIFIED | no browser interaction session |
-| AWS/Terraform, CloudWatch, recovery | PLANNED | no implementation/execution |
+| AWS connection and deployment recommendations | VERIFIED (mocked) | LocalStack-only default, explicit AWS opt-in, static-to-S3/server-to-EC2 selection; no live LocalStack verification |
+| S3 static deployment | IMPLEMENTED — NOT VERIFIED live | bounded verified-image extraction, bucket policy/website setup, approval and audit; mocked SDK tests only |
+| EC2/ECR deployment | IMPLEMENTED — NOT VERIFIED live | typed SDK flow and mocked launch request tested; requires configured Amazon Linux 2023 AMI and ECR-pull profile; LocalStack/AWS lifecycle not verified |
+| AWS resource monitoring | IMPLEMENTED — NOT VERIFIED live | EC2/S3 inventory and capped CloudWatch CPU requests; mocked client tests, no live metrics |
+| AWS stop/delete/recovery | PLANNED | successful deployments require cleanup from AWS console |
 
 Final commands/counts are in [TESTING.md](TESTING.md). Outstanding work is ordered in [PROJECT_MEMORY.md](../PROJECT_MEMORY.md).
 

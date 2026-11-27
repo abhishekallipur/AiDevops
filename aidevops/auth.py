@@ -16,6 +16,7 @@ _HASH_ALGORITHM = "pbkdf2_sha256"
 _HASH_ITERATIONS = 600_000
 _SESSION_TTL_SECONDS = 12 * 60 * 60
 _DUMMY_SALT = b"aidevops-login-dummy"
+SESSION_COOKIE = "aidevops_session"
 
 
 def _hash_password(password: str, salt: bytes | None = None) -> str:

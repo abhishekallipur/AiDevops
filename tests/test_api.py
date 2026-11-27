@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,6 +22,95 @@ def test_assistant_chat_requires_provider_configuration(client):
 
     assert response.status_code == 503
     assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def _login_as_configured_admin(client):
+    settings = client.app.state.settings
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": settings.admin_username,
+            "password": settings.admin_password,
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_live_ec2_metrics_require_admin_and_work_without_ai_provider(client, monkeypatch):
+    body = {
+        "messages": [
+            {"role": "user", "content": "Show EC2 CPU and RAM usage"}
+        ]
+    }
+    unauthorized = client.post("/api/assistant/chat", json=body)
+    assert unauthorized.status_code == 401
+
+    calls = []
+
+    def overview(*, include_memory=False):
+        calls.append(include_memory)
+        return {
+            "mode": "localstack",
+            "region": "us-east-1",
+            "instances": [
+                {
+                    "id": "i-123",
+                    "name": "demo",
+                    "state": "running",
+                    "cpu_percent": 12.3,
+                    "memory_percent": 55.2,
+                }
+            ],
+            "buckets": [],
+            "deployments": [],
+        }
+
+    monkeypatch.setattr(
+        client.app.state,
+        "aws_service",
+        SimpleNamespace(overview=overview),
+    )
+    _login_as_configured_admin(client)
+    response = client.post("/api/assistant/chat", json=body)
+
+    assert response.status_code == 200
+    assert "CPU 12.3%" in response.json()["reply"]
+    assert "RAM 55.2%" in response.json()["reply"]
+    assert calls == [True]
+
+
+def test_live_docker_metrics_are_admin_only_and_read_from_engine(client, monkeypatch):
+    containers = [
+        {"id": "a" * 64, "name": "web", "status": "running"},
+        {"id": "b" * 64, "name": "db", "status": "exited"},
+    ]
+    stats_calls = []
+    service = SimpleNamespace(
+        list_containers=lambda: containers,
+        get_stats=lambda identity: (
+            stats_calls.append(identity)
+            or {"cpu_percent": 4.5, "memory_percent": 21.0}
+        ),
+    )
+    monkeypatch.setattr(client.app.state, "docker_service", service)
+    _login_as_configured_admin(client)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "List running Docker containers and their CPU and memory usage",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert "web: running · CPU 4.5% · memory 21.0%" in response.json()["reply"]
+    assert "db: exited" not in response.json()["reply"]
+    assert stats_calls == ["a" * 64]
 
 
 def test_assistant_chat_surfaces_provider_errors(client, monkeypatch):

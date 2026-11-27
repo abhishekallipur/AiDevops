@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from html import escape
 from pathlib import Path
 import zipfile
@@ -10,7 +11,11 @@ import zipfile
 import httpx
 import streamlit as st
 
-from aidevops.ui.presentation import FILES, RESULTS, TOOLS, badge, journey, status
+from aidevops.auth import SESSION_COOKIE
+from aidevops.ui.aws_dashboard import render as render_aws_dashboard
+from aidevops.ui.aws_setup import render as render_aws_setup
+from aidevops.ui.presentation import FILES, RESULTS, TOOLS, badge, status
+from aidevops.ui.docker_dashboard import render as render_docker_dashboard
 from aidevops.ui.preview_panel import render as render_preview_panel
 
 API_URL = os.getenv("AIDEVOPS_API_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -48,49 +53,56 @@ def api(method, path, **kwargs):
         return None, "The service sent an unreadable response. Please try again."
 
 
-def render_ai_assistant() -> None:
+_SESSION_TOKEN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+
+
+def render_ai_assistant(api, session_cookie=None) -> None:
     if "assistant_messages" not in st.session_state:
         st.session_state["assistant_messages"] = []
 
-    with st.popover("🤖 AI Assistant", use_container_width=True):
-        st.caption("Ask general questions, or get help with DevOps and this workspace. Messages are sent to the configured AI provider.")
-        for message in st.session_state["assistant_messages"]:
-            with st.chat_message(
-                message["role"],
-                avatar="🤖" if message["role"] == "assistant" else "🙂",
-            ):
-                st.write(message["content"])
+    st.title("Aidevops assistant")
+    st.caption(
+        "Ask about your project or get live Docker and AWS status. Live infrastructure "
+        "readings require the configured administrator and are returned directly from the services."
+    )
+    st.info(
+        "Try “Show EC2 CPU and RAM” or “List running containers”. General questions use "
+        "the configured AI provider; live infrastructure readings do not."
+    )
 
-        assistant_error = st.session_state.get("assistant_error")
-        if assistant_error:
-            st.error(assistant_error)
+    messages = st.session_state["assistant_messages"]
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        with st.form("assistant_chat_form", clear_on_submit=True):
-            prompt = st.text_area(
-                "Message",
-                max_chars=2000,
-                placeholder="Ask anything...",
-                height=90,
-            )
-            submitted = st.form_submit_button("Send", use_container_width=True)
+    error = st.session_state.get("assistant_error")
+    if error:
+        st.error(error)
 
-        if submitted:
-            if not prompt.strip():
-                st.session_state["assistant_error"] = "Enter a question before sending."
-            else:
-                messages = st.session_state["assistant_messages"]
-                messages.append({"role": "user", "content": prompt.strip()})
-                response, error = api(
-                    "POST",
-                    "/api/assistant/chat",
-                    json={"messages": messages[-12:]},
-                )
-                if error:
-                    st.session_state["assistant_error"] = error
-                else:
-                    messages.append({"role": "assistant", "content": response["reply"]})
-                    st.session_state.pop("assistant_error", None)
-            st.rerun()
+    prompt = st.chat_input("Ask Aidevops", max_chars=2000)
+    if not prompt:
+        return
+    clean_prompt = prompt.strip()
+    if not clean_prompt:
+        return
+
+    messages.append({"role": "user", "content": clean_prompt})
+    headers = {}
+    if isinstance(session_cookie, str) and _SESSION_TOKEN.fullmatch(session_cookie):
+        headers["Cookie"] = f"{SESSION_COOKIE}={session_cookie}"
+    with st.spinner("Checking the right source…"):
+        response, error = api(
+            "POST",
+            "/api/assistant/chat",
+            headers=headers,
+            json={"messages": messages[-12:]},
+        )
+    if error:
+        st.session_state["assistant_error"] = error
+    else:
+        messages.append({"role": "assistant", "content": response["reply"]})
+        st.session_state.pop("assistant_error", None)
+    st.rerun()
 
 
 def new_project():
@@ -139,6 +151,18 @@ health, health_error = api("GET", "/health")
 
 with st.sidebar:
     st.markdown('<div class="aid-brand"><span class="aid-mark">a</span> aidevops<span class="aid-local">LOCAL</span></div>', unsafe_allow_html=True)
+    section = st.radio(
+        "Section",
+        [
+            "Project workspace",
+            "Docker monitoring",
+            "AWS monitoring",
+            "AWS setup",
+            "AI assistant",
+        ],
+        label_visibility="collapsed",
+        key="app_section",
+    )
     st.caption("YOUR PROJECT WORKSPACE")
     st.write("")
     st.button("＋ New project", on_click=new_project, use_container_width=True, type="primary")
@@ -169,8 +193,7 @@ with st.sidebar:
             st.caption(f"Version {health['version']} · {API_URL}")
         else:
             st.caption("Project service: disconnected")
-    render_ai_assistant()
-    st.markdown('<p class="aid-footnote">You stay in control.<br>Publishing and cloud deployment are not available yet.</p>', unsafe_allow_html=True)
+    st.markdown('<p class="aid-footnote">You stay in control.<br>Cloud actions require your approval.</p>', unsafe_allow_html=True)
     st.markdown(
         f'<a class="aid-sidebar-logout" href="{escape(API_URL)}/logout" '
         'target="_self" title="End your current login session">'
@@ -178,8 +201,24 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+if section == "Docker monitoring":
+    render_docker_dashboard(api, st.context.cookies.get(SESSION_COOKIE))
+    st.stop()
+
+if section == "AWS monitoring":
+    render_aws_dashboard(api, st.context.cookies.get(SESSION_COOKIE))
+    st.stop()
+
+if section == "AWS setup":
+    render_aws_setup(api, st.context.cookies.get(SESSION_COOKIE))
+    st.stop()
+
+if section == "AI assistant":
+    render_ai_assistant(api, st.context.cookies.get(SESSION_COOKIE))
+    st.stop()
+
 if health_error:
-    st.markdown('<div class="aid-hero"><div class="aid-kicker">Welcome to Aidevops</div><h1>A clearer path for your project.</h1><p>Understand your app, prepare its setup, and run checks with guidance at each step.</p></div>', unsafe_allow_html=True)
+    st.title("Project service unavailable")
     callout("Let’s connect your project service", "The local service is offline. Once it is started, your projects and guided review will be available here.")
     if st.button("Try connecting again", type="primary"):
         st.rerun()
@@ -190,41 +229,45 @@ if health_error:
 st.markdown('<div class="aid-topbar"><span>Workspace <span class="aid-slash">/</span> Projects</span><span class="aid-connected">● Service connected</span></div>', unsafe_allow_html=True)
 job_id = st.session_state.get("job_id")
 if not job_id or st.session_state.get("new_project"):
-    st.markdown('<div class="aid-hero"><div class="aid-hero-copy"><div class="aid-kicker">LESS SETUP. MORE BUILDING.</div><h1>Your project.<br><span>Ready for its next chapter.</span></h1><p>Bring your code. Get a tailored setup. Build and open your app, all from one workspace.</p><div class="aid-hero-tags"><span>↗ Project-aware setup</span><span>◉ Local previews</span><span>✓ You approve each run</span></div></div><div class="aid-launch-art" aria-hidden="true"><div class="aid-art-title"><i></i> YOUR NEXT LAUNCH</div><div class="aid-art-row"><span class="aid-art-icon">01</span><div><b>Bring your project</b><small>ZIP archive or local folder</small></div><em>↗</em></div><div class="aid-art-line"></div><div class="aid-art-row"><span class="aid-art-icon">02</span><div><b>Make it runnable</b><small>Review · build · preview</small></div><em>✦</em></div><div class="aid-art-footer">Your code. A clearer workflow.</div></div></div>', unsafe_allow_html=True)
-    st.markdown('<div class="aid-section-heading"><h2>Create your next workspace</h2><span>Start with your source code</span></div>', unsafe_allow_html=True)
-    main, aside = st.columns([1.7, 1], gap="large")
-    with main:
-        st.subheader("Add your project")
-        st.write("Upload an archive or paste a folder location. We’ll identify your app and prepare its setup.")
-        upload_tab, folder_tab = st.tabs(["Upload a project", "Use a folder"])
-        with upload_tab:
+    st.title("Build and deploy your app")
+    st.write(
+        "Add your source code. Aidevops will identify the app, prepare a Docker setup, "
+        "and guide you through a local preview and optional AWS deployment."
+    )
+    upload_col, folder_col = st.columns(2, gap="large")
+    with upload_col:
+        with st.container(border=True):
+            st.subheader("Upload a source archive")
             upload = st.file_uploader("Choose your project archive", type=["zip", "tar", "gz", "tgz"], help="Upload your app’s source files as a ZIP or TAR archive. Aidevops cannot analyze a screenshot or a finished app installer.")
-            st.caption("Have a project folder? Compress it into a ZIP first. Leave out passwords, keys, and private files.")
+            st.caption("ZIP, TAR, GZ, or TGZ. Leave out passwords, keys, and private files.")
             if st.button("Review this upload", type="primary", disabled=upload is None, use_container_width=True):
                 create_and_run(files={"file": (upload.name, upload.getvalue(), "application/octet-stream")})
-        with folder_tab:
+    with folder_col:
+        with st.container(border=True):
+            st.subheader("Use a folder on this computer")
             with st.form("project_folder"):
-                source = st.text_input("Project folder location", placeholder=r"E:\MyProjects\my-app", help="The folder must be accessible on the computer running the project service.")
-                st.caption("On Windows: open your project folder in File Explorer, then copy its address from the top bar.")
-                submitted = st.form_submit_button("Review this folder", type="primary", use_container_width=True)
+                source = st.text_input(
+                    "Project folder",
+                    placeholder=r"E:\Projects\my-app",
+                    help="The folder must be accessible to the computer running Aidevops.",
+                )
+                submitted = st.form_submit_button(
+                    "Review this folder", type="primary", use_container_width=True
+                )
             if submitted:
                 if not source.strip():
-                    st.error("Add the folder location first, or try the example project.")
+                    st.error("Enter the project folder location first, or use the example project below.")
                 else:
                     create_and_run(payload={"source_path": source.strip()})
-    with aside:
-        callout("Take a quick test drive.", "Explore the workflow with an included sample app. No project files needed.")
-        if st.button("Try an example project", use_container_width=True):
+    with st.container(border=True):
+        st.markdown("#### Want to try the workflow first?")
+        st.caption("Create a review using the included sample app.")
+        if st.button("Open the example project"):
             create_and_run(payload={"source_path": SAMPLE_REPO})
-        st.caption("Uses a bundled sample app. The plan is AI-generated only when a provider is available; otherwise it is clearly labelled as an example plan.")
-    st.divider()
-    cards = st.columns(3)
-    for col, (number, title, detail) in zip(cards, [
-        ("01", "Understand your app", "See the project type and what Aidevops found in your files."),
-        ("02", "Get a starting setup", "Download packaging and check configuration prepared for your project."),
-        ("03", "Build & open your app", "Approve a build, launch a local preview, and open it in your browser."),
-    ]):
-        col.markdown(f'<div class="aid-feature"><span class="aid-kicker">{number}</span><b>{title}</b><p>{detail}</p></div>', unsafe_allow_html=True)
+    st.caption(
+        "Review generated setup and approve each build or deployment before it runs. "
+        "Uploading files does not publish your app."
+    )
     st.stop()
 
 job, error = api("GET", f"/api/jobs/{job_id}")
@@ -264,21 +307,90 @@ if job.get("error") or state == "FAILED":
         with st.expander("Technical error details"):
             st.code(job["error"], language="text")
 
-build_tab, overview_tab, files_tab, checks_tab = st.tabs(["Build & preview", "Project overview", "Setup files", "Checks & results"])
-with build_tab:
+with st.container(border=True):
+    st.subheader("Build & preview")
     if job.get("artifacts"):
         poll_key = "preview_poll_" + job_id
         poll_interval = st.session_state.get(poll_key)
         @st.fragment(run_every=poll_interval)
         def local_preview():
-            next_interval = render_preview_panel(api, job_id, profile)
+            next_interval = render_preview_panel(
+                api, job_id, profile, st.context.cookies.get(SESSION_COOKIE)
+            )
             if next_interval != poll_interval:
                 st.session_state[poll_key] = next_interval
                 st.rerun()
         local_preview()
     if not job.get("artifacts"):
         st.info("Finish the project review to prepare your build and local preview.")
-with overview_tab:
+
+if state == "AWAITING_APPROVAL":
+    with st.container(border=True):
+        st.subheader("Ready to check your project?")
+        st.write(
+            "We’ll review the packaging instructions and, if tests were found, run them "
+            "in a temporary environment. This may download dependencies and run your "
+            "project’s code with internet access. Your original project files will not be edited."
+        )
+        st.caption(
+            "This does not build a deployable image or publish your app. "
+            "You can download the setup files without running checks."
+        )
+        needs_docker = bool(profile and profile.get("test_locations"))
+        unavailable = needs_docker and (
+            not health["docker_available"] or health.get("exec_backend") == "disabled"
+        )
+        if unavailable:
+            st.warning(
+                "Project tests are unavailable right now. Start Docker and enable "
+                "container checks in the service settings, then refresh. You can still "
+                "review and download your setup files."
+            )
+        approved = st.checkbox(
+            "I have reviewed the setup and allow these checks to run",
+            key="approve_" + job_id,
+        )
+        if st.button(
+            "Approve & run checks",
+            type="primary",
+            disabled=not approved or unavailable,
+            use_container_width=True,
+        ):
+            with st.status("Running your project checks…", expanded=True) as progress:
+                result, error = api(
+                    "POST", f"/api/jobs/{job_id}/execute", json={"approved": True}
+                )
+                if error:
+                    progress.update(label="Checks could not start", state="error")
+                    st.error(error)
+                else:
+                    progress.update(
+                        label=status(result["state"])[0],
+                        state="complete" if result["state"] == "SUCCEEDED" else "error",
+                    )
+                    st.rerun()
+elif job.get("executions"):
+    with st.expander("Check results", expanded=False):
+        st.subheader("What happened in your checks")
+        for record in job["executions"]:
+            with st.container(border=True):
+                st.write("**" + TOOLS.get(record["tool"], record["tool"]) + "**")
+                st.markdown(
+                    badge(
+                        RESULTS.get(record["status"], record["status"]),
+                        "ok" if record["status"] == "ok" else "warn",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                if record.get("reason"):
+                    st.write(record["reason"])
+                st.caption(f"{record['tool']} · exit code {record.get('exit_code')}")
+                st.code(record.get("output") or "No additional output.", language="text")
+else:
+    with st.expander("Check results", expanded=False):
+        st.info("Check results will appear here after you approve and run project checks.")
+
+with st.expander("Project overview", expanded=False):
     if profile:
         st.subheader("Here’s what we found")
         cols = st.columns(3)
@@ -316,7 +428,7 @@ with overview_tab:
             for text in plan.get("assumptions", []) + plan.get("risks", []):
                 st.write("• " + text)
 
-with files_tab:
+with st.expander("Setup files", expanded=False):
     st.subheader("Your setup files")
     st.caption("You can download these now. Downloading does not change your app or publish it.")
     data, artifact_error = api("GET", f"/api/jobs/{job_id}/artifacts")
@@ -345,43 +457,7 @@ with files_tab:
                     st.code(artifact["content"], language="dockerfile" if artifact["kind"] == "Dockerfile" else "text")
                     st.download_button("Download " + artifact["path"].split("/")[-1], data=artifact["content"], file_name=artifact["path"].split("/")[-1], key="dl_" + artifact["path"])
 
-with checks_tab:
-    if state == "AWAITING_APPROVAL":
-        st.divider()
-        st.subheader("Ready to check your project?")
-        st.write("We’ll review the packaging instructions and, if tests were found, run them in a temporary environment. This may download dependencies and run your project’s code with internet access. Your original project files will not be edited.")
-        st.caption("This does not build a deployable image or publish your app. You can download the setup files without running checks.")
-        needs_docker = bool(profile and profile.get("test_locations"))
-        unavailable = needs_docker and (not health["docker_available"] or health.get("exec_backend") == "disabled")
-        if unavailable:
-            st.warning("Project tests are unavailable right now. Start Docker and enable container checks in the service settings, then refresh. You can still review and download your setup files.")
-        approved = st.checkbox("I have reviewed the setup and allow these checks to run", key="approve_" + job_id)
-        if st.button("Approve & run checks", type="primary", disabled=not approved or unavailable, use_container_width=True):
-            with st.status("Running your project checks…", expanded=True) as progress:
-                result, error = api("POST", f"/api/jobs/{job_id}/execute", json={"approved": True})
-                if error:
-                    progress.update(label="Checks could not start", state="error")
-                    st.error(error)
-                else:
-                    progress.update(label=status(result["state"])[0], state="complete" if result["state"] == "SUCCEEDED" else "error")
-                    st.rerun()
-
-    if job.get("executions"):
-        st.subheader("What happened in your checks")
-        for record in job["executions"]:
-            with st.container(border=True):
-                st.write("**" + TOOLS.get(record["tool"], record["tool"]) + "**")
-                st.markdown(badge(RESULTS.get(record["status"], record["status"]), "ok" if record["status"] == "ok" else "warn"), unsafe_allow_html=True)
-                if record.get("reason"):
-                    st.write(record["reason"])
-                with st.expander("View technical log"):
-                    st.caption(f"{record['tool']} · exit code {record.get('exit_code')}")
-                    st.code(record.get("output") or "No additional output.", language="text")
-
-    if state != "AWAITING_APPROVAL" and not job.get("executions"):
-        st.info("Check results will appear here after you approve and run project checks.")
-
-with st.expander("Review details & controls"):
+with st.expander("Review details & controls", expanded=False):
     st.caption(f"Review reference: {job_id}")
     st.caption("Internal status: " + state)
     for event in job.get("history", []):

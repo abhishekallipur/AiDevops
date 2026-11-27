@@ -110,6 +110,12 @@ class Settings:
     admin_password: str = "admin123"
     dashboard_url: str = "http://127.0.0.1:8501"
 
+    aws_mode: str = "localstack"
+    aws_endpoint_url: str | None = "http://localhost:4566"
+    aws_region: str = "us-east-1"
+    aws_ec2_ami_id: str | None = None
+    aws_ec2_instance_profile_arn: str | None = None
+
     # ------------------------------------------------------------------ helpers
     @property
     def active_llm_provider(self) -> str:
@@ -227,6 +233,13 @@ def load_settings(*, load_dotenv_file: bool = True) -> Settings:
             _env_str("AIDEVOPS_DASHBOARD_URL", "http://127.0.0.1:8501")
             or "http://127.0.0.1:8501"
         ),
+        aws_mode=(_env_str("AIDEVOPS_AWS_MODE", "localstack") or "localstack").lower(),
+        aws_endpoint_url=_env_str("AIDEVOPS_AWS_ENDPOINT_URL", "http://localhost:4566"),
+        aws_region=_env_str("AIDEVOPS_AWS_REGION", "us-east-1") or "us-east-1",
+        aws_ec2_ami_id=_env_str("AIDEVOPS_AWS_EC2_AMI_ID"),
+        aws_ec2_instance_profile_arn=_env_str("AIDEVOPS_AWS_EC2_INSTANCE_PROFILE_ARN"),
     )
+    if settings.aws_mode not in {"localstack", "aws"}:
+        raise ValueError("AIDEVOPS_AWS_MODE must be 'localstack' or 'aws'")
     settings.ensure_dirs()
     return settings

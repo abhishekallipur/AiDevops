@@ -115,7 +115,7 @@ def test_start_stop_expiry_and_cleanup(preview_client, python_repo, monkeypatch)
         def __init__(self, **kw): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
-        def stream(self, *args): return self
+        def stream(self, *args, **kwargs): return self
         status_code = 200
     monkeypatch.setattr("aidevops.services.preview.httpx.Client", FakeHTTP)
     service.approve_start(identity, True, 8000, "/health", 15, {"TEST_SETTING": "fake-secret-value"})
@@ -131,6 +131,26 @@ def test_start_stop_expiry_and_cleanup(preview_client, python_repo, monkeypatch)
     assert service.get(identity)["state"] == "EXPIRED"
     service.cleanup(identity)
     assert service.get(identity)["state"] == "REMOVED"
+
+
+def test_fastapi_preview_uses_api_docs_if_root_returns_not_found(preview_client):
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class FakeHTTP:
+        def stream(self, _method, url, **_kwargs):
+            return FakeResponse(200 if url.endswith("/docs") else 404)
+
+    assert PreviewService._resolve_open_url(
+        FakeHTTP(), "http://127.0.0.1:45678", "FastAPI", "/health"
+    ) == "http://127.0.0.1:45678/docs"
 
 
 def test_failed_start_removes_container(preview_client, python_repo, monkeypatch):
